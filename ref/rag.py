@@ -4,10 +4,8 @@ from langchain.schema.runnable import RunnablePassthrough
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-#from langchain_community.vectorstores import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-#from langchain_openai import OpenAIEmbeddings
 from rich import print
 from unstructured.cleaners.core import clean_extra_whitespace, group_broken_paragraphs
 import pandas as pd
@@ -22,42 +20,6 @@ from langchain.retrievers import ParentDocumentRetriever
 from sentence_transformers import CrossEncoder
 from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 
-
-# def load_pdf(files = "data/2306.02707.pdf"):
-#     """
-#     Loads documents from PDF files using UnstructuredFileLoader.
-
-#     Parameters:
-#     - files: A string representing a single file path or a list of strings representing multiple file paths.
-
-#     Returns:
-#     - A list of Document objects loaded from the provided PDF files.
-
-#     Raises:
-#     - FileNotFoundError: If any of the provided file paths do not exist.
-#     - Exception: For any other issues encountered during file loading.
-
-#     The function applies post-processing steps such as cleaning extra whitespace and grouping broken paragraphs.
-#     """
-#     if not isinstance(files, list):
-#         files = [files]  # Ensure 'files' is always a list
-
-#     documents = []
-#     for file_path in files:
-#         try:
-#             loader = UnstructuredFileLoader(
-#                 file_path,
-#                 post_processors=[clean_extra_whitespace, group_broken_paragraphs],
-#             )
-#             documents.extend(loader.load())
-#         except FileNotFoundError as e:
-#             print(f"File not found: {e.filename}")
-#             raise
-#         except Exception as e:
-#             print(f"An error occurred while loading {file_path}: {e}")
-#             raise
-
-#     return documents
 
 import fitz  # PyMuPDF
 from langchain.docstore.document import Document
@@ -220,6 +182,9 @@ def split_documents(
         )
 
     docs_processed = (text_splitter.split_documents([doc]) for doc in knowledge_base)
+
+    print(f">>> Numero de chunks: {len(docs_processed)}")
+
     # Flatten list and remove duplicates more efficiently
     unique_texts = set()
     docs_processed_unique = []
@@ -254,7 +219,7 @@ def load_embedding_model(
         if model_name=="openai":
              embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
         else:
-            model_name=EMBEDDING_MODEL_NAME #"BAAI/bge-large-en-v1.5"
+            model_name=EMBEDDING_MODEL_NAME 
             if torch.backends.mps.is_available():
                 device = "mps"
             elif torch.cuda.is_available():
@@ -358,7 +323,7 @@ def create_multi_query_retriever(base_retriever, llm):
 def create_parent_retriever(
     docs, 
     embeddings_model,
-    collection_name="split_documents", 
+    collection_name, 
     top_k=5,
     persist_directory=None,
 ):
@@ -380,7 +345,7 @@ def create_parent_retriever(
     - ValueError: If any input parameter is invalid.
     """
 
-    ''' 
+    
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
         chunk_size=512,
@@ -402,7 +367,7 @@ def create_parent_retriever(
     parent_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
         AutoTokenizer.from_pretrained(EMBEDDING_MODEL_NAME),
         chunk_size=chunk_size,
-        chunk_overlap=int(chunk_size / 10),
+        chunk_overlap=100, #int(chunk_size / 10),
         add_start_index=True,
         strip_whitespace=True,
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
@@ -413,15 +378,15 @@ def create_parent_retriever(
     child_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
         AutoTokenizer.from_pretrained(EMBEDDING_MODEL_NAME),
         chunk_size=int(chunk_size / 2),
-        chunk_overlap=int(chunk_size / 10),
+        chunk_overlap=50, #int(chunk_size / 10),
         add_start_index=True,
         strip_whitespace=True,
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
         is_separator_regex=False,
     )
-
+    ''' 
     # The vectorstore to use to index the child chunks
-    vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model, auto_id=True) #, persist_directory=persist_directory)
+    vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model, auto_id=True)
 
     # The storage layer for the parent documents
     store = InMemoryStore()
@@ -466,7 +431,7 @@ def rerank_docs(query, retrieved_docs, reranker_model):
     return ranked_docs
 
 
-def retrieve_context_reranked(query, retriever, reranker_model="gpt4"):
+def retrieve_context_reranked(query, retriever, reranker_model):
     """
     Retrieve the context and rerank them based on the selected re-ranking model.
 

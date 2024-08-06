@@ -26,17 +26,10 @@ MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir 
 def main(
     directory: str = "C:/Pruebas/RAG Search/demo_docu", #"data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf"
 ):
-
-    # Get all files in the directory
-    files = os.listdir(directory)
-    # Filter out PDF, DOCX, and XLSX files
-    document_files = [f"{directory}/{file}" for file in files if file.endswith(('.pdf', '.docx', '.xlsx'))]
-    #print(document_files)
-
-    #llm = ChatOpenAI(model_name="gpt-4-turbo") #"gpt-3.5-turbo-0125"
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
+    docs = load_documents(folder_path=directory)
 
-    docs = load_documents(files=document_files)
+    # print(f"\n\n>>> Documentos a procesar: {len(docs)}\n\n")
 
     embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
     base_retriever = create_parent_retriever(docs, embedding_model, collection_name=COLLECTION_NAME)
@@ -65,7 +58,9 @@ def main(
         context = retrieve_context_reranked(
             query, retriever=retriever, reranker_model=RERANKING_TYPE #"cohere"
         )
-        #print(f"Here is the context: {context}")
+        
+        # print(f">>> Este es el contexto: {context}")
+        
         text = ""
         for i,chunk in enumerate(context):
             if i < MAX_CHUNKS_CONSIDERED:

@@ -22,6 +22,7 @@ load_dotenv(ENV_VAR_PATH)
 
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
 
 
@@ -30,7 +31,7 @@ class rag_client:
 
     def __init__(self, folder_path):
         docs = load_documents(folder_path)
-        self.retriever = create_parent_retriever(docs, self.embedding_model)
+        self.retriever = create_parent_retriever(docs, self.embedding_model, collection_name=COLLECTION_NAME)
         
         # llm = ChatOpenAI(model_name="gpt-4o")
         # llm = ChatOllama(model="llama3")
