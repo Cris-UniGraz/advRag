@@ -70,46 +70,23 @@ from dotenv import load_dotenv
 from pathlib import Path
 from openai import AzureOpenAI
 
-ENV_VAR_PATH = 'C:/Users/hernandc/RAG Test/apikeys.env'
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME") #'deutsche-telekom/gbert-large-paraphrase-cosine'
-AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL") #"gpt-4-turbo"
+# Al principio del archivo, después de las importaciones
+ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
+load_dotenv(ENV_VAR_PATH)
 
-def load_documents(files):
-    """
-    Loads documents from PDF, DOCX, and XLSX files.
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
+AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 
-    Parameters:
-    - files: A string representing a single file path or a list of strings representing multiple file paths.
-
-    Returns:
-    - A list of Document objects loaded from the provided files.
-
-    Raises:
-    - FileNotFoundError: If any of the provided file paths do not exist.
-    - Exception: For any other issues encountered during file loading.
-    """
-    if not isinstance(files, list):
-        files = [files]  # Ensure 'files' is always a list
-
+def load_documents(folder_path):
     documents = []
-    for file_path in files:
-        try:
-            file_extension = os.path.splitext(file_path)[1].lower()
-            if file_extension == '.pdf':
-                documents.extend(load_pdf(file_path))
-            elif file_extension == '.docx':
-                documents.extend(load_docx(file_path))
-            elif file_extension == '.xlsx':
-                documents.extend(load_xlsx(file_path))
-            else:
-                print(f"Unsupported file type: {file_extension}")
-        except FileNotFoundError as e:
-            print(f"File not found: {e.filename}")
-            raise
-        except Exception as e:
-            print(f"An error occurred while loading {file_path}: {e}")
-            raise
-
+    for file in os.listdir(folder_path):
+        file_path = os.path.join(folder_path, file)
+        if file.lower().endswith('.pdf'):
+            documents.extend(load_pdf(file_path))
+        elif file.lower().endswith('.docx'):
+            documents.extend(load_docx(file_path))
+        elif file.lower().endswith('.xlsx'):
+            documents.extend(load_xlsx(file_path))
     return documents
 
 def load_docx(file_path):
@@ -311,7 +288,6 @@ def retrieve_context(query, retriever):
 
     """
 
-    #retrieved_docs = retriever.get_relevant_documents(query)
     retrieved_docs = retriever.invoke(input=query)
 
     return retrieved_docs
@@ -445,13 +421,6 @@ def create_parent_retriever(
     )
 
     # The vectorstore to use to index the child chunks
-    '''
-    vectorstore = Chroma(
-        collection_name=collection_name,
-        embedding_function=embeddings_model,
-        persist_directory=persist_directory,
-    )
-    '''
     vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model, auto_id=True) #, persist_directory=persist_directory)
 
     # The storage layer for the parent documents
@@ -512,7 +481,6 @@ def retrieve_context_reranked(query, retriever, reranker_model="gpt4"):
 
     """
 
-    #retrieved_docs = retriever.get_relevant_documents(query)
     retrieved_docs = retriever.invoke(input=query)
 
     if len(retrieved_docs) == 0:

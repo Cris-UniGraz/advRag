@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from jsonargparse import CLI
 import os
-
+from dotenv import load_dotenv
 
 from rag import (
     create_parent_retriever,
@@ -14,8 +14,14 @@ from rag import (
     azure_openai_call
 )
 
-COLLECTION_NAME = os.getenv("COLLECTION_NAME") #"uni_test_6"
-MAX_CHUNKS_CONSIDERED = os.getenv("MAX_CHUNKS_CONSIDERED") #5
+# Al principio del archivo, después de las importaciones
+ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
+load_dotenv(ENV_VAR_PATH)
+
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME")
+RERANKING_TYPE = os.getenv("RERANKING_TYPE")
+MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
 
 def main(
     directory: str = "C:/Pruebas/RAG Search/demo_docu", #"data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf"
@@ -32,7 +38,7 @@ def main(
 
     docs = load_documents(files=document_files)
 
-    embedding_model = load_embedding_model()
+    embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
     base_retriever = create_parent_retriever(docs, embedding_model, collection_name=COLLECTION_NAME)
     retriever = create_multi_query_retriever(base_retriever, llm)
 
@@ -57,9 +63,9 @@ def main(
             break
 
         context = retrieve_context_reranked(
-            query, retriever=retriever, reranker_model="german" #"cohere"
+            query, retriever=retriever, reranker_model=RERANKING_TYPE #"cohere"
         )
-        print(f"Here is the context: {context}")
+        #print(f"Here is the context: {context}")
         text = ""
         for i,chunk in enumerate(context):
             if i < MAX_CHUNKS_CONSIDERED:

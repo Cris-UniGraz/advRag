@@ -6,9 +6,14 @@ import time
 import json
 import cohere
 import os
+from dotenv import load_dotenv
 
-GERMAN_RERANKING_MODEL_NAME = os.getenv("GERMAN_RERANKING_MODEL_NAME") #"deepset/gbert-base-germandpr-reranking"
-AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL") #"gpt-4-turbo" #'gpt-4-1106-preview'
+# Al principio del archivo, después de las importaciones
+ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
+load_dotenv(ENV_VAR_PATH)
+
+GERMAN_RERANKING_MODEL_NAME = os.getenv("GERMAN_RERANKING_MODEL_NAME")
+AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 
 # Function to compute MaxSim
 def maxsim(query_embedding, document_embedding):

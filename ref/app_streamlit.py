@@ -1,73 +1,53 @@
 # Adapted from https://docs.streamlit.io/knowledge-base/tutorials/build-conversational-apps#build-a-simple-chatbot-gui-with-streaming
 import os
-
 import base64
 import gc
 import tempfile
 import uuid
-
 import streamlit as st
-
+from tkinter import filedialog
 from rag_client import rag_client
 
 
 if "id" not in st.session_state:
     st.session_state.id = uuid.uuid4()
     st.session_state.file_cache = {}
+    st.session_state.client = None  # Añade esta línea
 
 session_id = st.session_state.id
-client = None
-
 
 def reset_chat():
     st.session_state.messages = []
     st.session_state.context = None
     gc.collect()
 
-
-def display_pdf(file):
-    # Opening file from file path
-
-    st.markdown("### PDF Preview")
-    base64_pdf = base64.b64encode(file.read()).decode("utf-8")
-
-    # Embedding PDF in HTML
-    pdf_display = f"""<iframe src="data:application/pdf;base64,{base64_pdf}" width="400" height="100%" type="application/pdf"
-                        style="height:100vh; width:100%"
-                    >
-                    </iframe>"""
-
-    # Displaying File
-    st.markdown(pdf_display, unsafe_allow_html=True)
-
-
 with st.sidebar:
-    uploaded_file = st.file_uploader("Choose your `.pdf` file", type="pdf")
-    if uploaded_file is not None:
-        with tempfile.NamedTemporaryFile() as temp_file, st.status(
-            "processing your document", expanded=False, state="running"
-        ):
-            with open(temp_file.name, "wb") as f:
-                f.write(uploaded_file.getvalue())
-            file_key = f"{session_id}-{uploaded_file.name}"
-            st.write("indexing in progress...")
-            if file_key not in st.session_state.file_cache:
-                client = rag_client(files=temp_file.name)
-                st.session_state.file_cache[file_key] = client
-            else:
-                client = st.session_state.file_cache[file_key]
-            st.write("processing complete, ask your questions...")
+    st.write("Seleccione una carpeta:")
+    folder_path = st.text_input("Ruta de la carpeta:", key="folder_input")
+    
+    if st.button("Procesar documentos"):
+        if folder_path and os.path.isdir(folder_path):
+            with st.status("Procesando sus documentos", expanded=False, state="running"):
+                st.write("Indexación en progreso...")
+                if folder_path not in st.session_state.file_cache:
+                    st.session_state.client = rag_client(folder_path=folder_path)
+                    st.session_state.file_cache[folder_path] = st.session_state.client
+                else:
+                    st.session_state.client = st.session_state.file_cache[folder_path]
+                st.write("Procesamiento completo, haga sus preguntas...")
+        else:
+            st.error("Por favor, ingrese una ruta de carpeta válida.")
 
-        display_pdf(uploaded_file)
-
+    if 'folder_path' in st.session_state:
+        st.write(f"Carpeta actual: {st.session_state.folder_path}")
 
 col1, col2 = st.columns([6, 1])
 
 with col1:
-    st.header(f"Chat with PDF")
+    st.header(f"Chatten mit Dateien")
 
 with col2:
-    st.button("Clear ↺", on_click=reset_chat)
+    st.button("Löschen ↺", on_click=reset_chat)
 
 
 # Initialize chat history
@@ -82,9 +62,13 @@ for message in st.session_state.messages:
 
 
 # Accept user input
-if prompt := st.chat_input("What's on your mind?"):
-    if uploaded_file is None:
-        st.exception(FileNotFoundError("Please upload a document first!"))
+if prompt := st.chat_input("¿Qué tiene en mente?"):
+    if not folder_path or not os.path.isdir(folder_path):
+        st.exception(FileNotFoundError("¡Por favor, ingrese una ruta de carpeta válida primero!"))
+        st.stop()
+
+    if st.session_state.client is None:
+        st.error("El cliente no se ha inicializado. Por favor, procese los documentos primero.")
         st.stop()
 
     # Add user message to chat history
@@ -97,15 +81,13 @@ if prompt := st.chat_input("What's on your mind?"):
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
-        # context = st.session_state.context
 
         # Simulate stream of response with milliseconds delay
-        for chunk in client.stream(prompt):
+        for chunk in st.session_state.client.stream(prompt):
             full_response += chunk
             message_placeholder.markdown(full_response + "▌")
 
         message_placeholder.markdown(full_response)
-        # st.session_state.context = ctx
 
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": full_response})
