@@ -2,38 +2,49 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from jsonargparse import CLI
+import os
 
 
 from rag import (
     create_parent_retriever,
     load_embedding_model,
-    load_pdf,
+    load_documents,
     retrieve_context_reranked,
-    create_multi_query_retriever
+    create_multi_query_retriever,
+    azure_openai_call
 )
 
+COLLECTION_NAME = os.getenv("COLLECTION_NAME") #"uni_test_6"
+MAX_CHUNKS_CONSIDERED = os.getenv("MAX_CHUNKS_CONSIDERED") #5
 
 def main(
-    file: str = "data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf",
+    directory: str = "C:/Pruebas/RAG Search/demo_docu", #"data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf"
 ):
-    
 
-    llm = ChatOpenAI(model_name="gpt-3.5-turbo-0125")
+    # Get all files in the directory
+    files = os.listdir(directory)
+    # Filter out PDF, DOCX, and XLSX files
+    document_files = [f"{directory}/{file}" for file in files if file.endswith(('.pdf', '.docx', '.xlsx'))]
+    #print(document_files)
 
-    docs = load_pdf(files=file)
+    #llm = ChatOpenAI(model_name="gpt-4-turbo") #"gpt-3.5-turbo-0125"
+    llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
+
+    docs = load_documents(files=document_files)
 
     embedding_model = load_embedding_model()
-    base_retriever = create_parent_retriever(docs, embedding_model, collection_name="test-1")
+    base_retriever = create_parent_retriever(docs, embedding_model, collection_name=COLLECTION_NAME)
     retriever = create_multi_query_retriever(base_retriever, llm)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
             """
-            You are an experienced academic researcher. Your job is to extract information from the provided CONTEXT based on the user question.
-            Think step by step and only use the information from the CONTEXT that is relevant to the user question. Provide detailed responses.   
+            Du bist eine erfahrene virtuelle Assistentin der Universität Graz und kennst alle Informationen über die Universität Graz. Deine Aufgabe ist es, auf der Grundlage der Benutzerfrage Informationen aus dem bereitgestellten KONTEXT zu extrahieren. 
+            Denk Schritt für Schritt und verwende nur die Informationen aus dem KONTEXT, die für die Benutzerfrage relevant sind. Gib detaillierte Antworten auf Deutsch.  
 
-            QUESTION: ```{question}```\n
-            CONTEXT: ```{context}```\n"""
+            ANFRAGE: ```{question}```\n
+            KONTEXT: ```{context}```\n
+            """
         )
     )
 
@@ -46,12 +57,12 @@ def main(
             break
 
         context = retrieve_context_reranked(
-            query, retriever=retriever, reranker_model="cohere"
+            query, retriever=retriever, reranker_model="german" #"cohere"
         )
-        # print(f"Here is the context: {context}")
+        print(f"Here is the context: {context}")
         text = ""
         for i,chunk in enumerate(context):
-            if i <3:
+            if i < MAX_CHUNKS_CONSIDERED:
                 text = text +"\n"+ chunk
             else:
                 break

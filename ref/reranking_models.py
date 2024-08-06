@@ -1,11 +1,14 @@
 from transformers import AutoTokenizer, AutoModel
-from openai import OpenAI
+#from openai import OpenAI
+from openai import AzureOpenAI
 import torch
 import time
 import json
 import cohere
 import os
 
+GERMAN_RERANKING_MODEL_NAME = os.getenv("GERMAN_RERANKING_MODEL_NAME") #"deepset/gbert-base-germandpr-reranking"
+AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL") #"gpt-4-turbo" #'gpt-4-1106-preview'
 
 # Function to compute MaxSim
 def maxsim(query_embedding, document_embedding):
@@ -29,20 +32,25 @@ def maxsim(query_embedding, document_embedding):
 def reranking_gpt(similar_chunks, query):
 
     start = time.time()
-    client = OpenAI()
+    #client = OpenAI()
+    client = AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
+        api_version="2023-05-15",
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
     response = client.chat.completions.create(
-        model='gpt-4-1106-preview',
+        model=AZURE_OPENAI_MODEL,
         response_format={"type": "json_object"},
         temperature=0,
         messages=[
         {"role": "system", 
-        "content": """You are an expert relevance ranker. Given a list of documents and a query, your job is to determine how relevant each document is for answering the query. 
-        Your output is JSON, which is a list of documents.  Each document has two fields, content and score.  relevance_score is from 0.0 to 100.0. Higher relevance means higher score."""},
+        "content": """Du bist ein Experte für Relevanzbewertung. Anhand einer Liste von Dokumenten und einer Abfrage musst du bestimmen, wie relevant jedes Dokument für die Beantwortung der Abfrage ist. 
+        Deine Ausgabe ist JSON, d.h. eine Liste von Dokumenten.  Jedes Dokument hat zwei Felder: Inhalt und Punktzahl. relevance_score liegt zwischen 0,0 und 100,0. Höhere Relevanz bedeutet höhere Punktzahl"""},
         {"role": "user", "content": f"Query: {query} Docs: {similar_chunks}"}
         ]
     )
 
-    print(f"Took {time.time() - start} seconds to re-rank documents with GPT-4.")
+    print(f"Took {time.time() - start} seconds to re-rank documents with {AZURE_OPENAI_MODEL}.")
 
     # Sort the scores by highest to lowest and print
     scores = json.loads(response.choices[0].message.content)["documents"]
@@ -53,6 +61,41 @@ def reranking_gpt(similar_chunks, query):
         documents.append(f"{r['content']}")
     return documents
 
+
+def reranking_german(similar_chunks, query):
+
+    start = time.time()
+    scores = []
+
+    # Load the tokenizer and the model
+    tokenizer = AutoTokenizer.from_pretrained(GERMAN_RERANKING_MODEL_NAME)
+    model = AutoModel.from_pretrained(GERMAN_RERANKING_MODEL_NAME)
+
+    # Encode the query
+    query_encoding = tokenizer(query, return_tensors='pt')
+    query_embedding = model(**query_encoding).last_hidden_state.mean(dim=1)
+
+    # Get score for each document
+    for document in similar_chunks:
+        document_encoding = tokenizer(document.page_content, return_tensors='pt', truncation=True, max_length=512)
+        document_embedding = model(**document_encoding).last_hidden_state
+
+        # Calculate MaxSim score
+        score = maxsim(query_embedding.unsqueeze(0), document_embedding)
+        scores.append({
+            "score": score.item(),
+            "document": document.page_content,
+        })
+
+    print(f"Took {time.time() - start} seconds to re-rank documents with {GERMAN_RERANKING_MODEL_NAME}.")
+
+    # Sort the scores by highest to lowest and print
+    sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
+    documents = []
+    for idx, r in enumerate(sorted_data):
+        documents.append(f"{r['document']}")
+    
+    return documents
 
 def reranking_colbert(similar_chunks, query):
 

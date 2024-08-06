@@ -4,10 +4,10 @@ from langchain.schema.runnable import RunnablePassthrough
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import UnstructuredFileLoader
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-from langchain_community.vectorstores import Chroma
+#from langchain_community.vectorstores import Chroma
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import OpenAIEmbeddings
+#from langchain_openai import OpenAIEmbeddings
 from rich import print
 from unstructured.cleaners.core import clean_extra_whitespace, group_broken_paragraphs
 import pandas as pd
@@ -20,7 +20,7 @@ from langchain.retrievers import EnsembleRetriever
 from langchain.storage import InMemoryStore
 from langchain.retrievers import ParentDocumentRetriever
 from sentence_transformers import CrossEncoder
-from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt
+from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 
 
 # def load_pdf(files = "data/2306.02707.pdf"):
@@ -61,22 +61,32 @@ from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt
 
 import fitz  # PyMuPDF
 from langchain.docstore.document import Document
+import docx
+import openpyxl
+from langchain_milvus import Milvus
+from langchain_core.runnables import RunnablePassthrough
+from langchain.schema import HumanMessage
+from dotenv import load_dotenv
+from pathlib import Path
+from openai import AzureOpenAI
 
-def load_pdf(files="data/2306.02707.pdf"):
+ENV_VAR_PATH = 'C:/Users/hernandc/RAG Test/apikeys.env'
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME") #'deutsche-telekom/gbert-large-paraphrase-cosine'
+AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL") #"gpt-4-turbo"
+
+def load_documents(files):
     """
-    Loads documents from PDF files using PyMuPDF.
+    Loads documents from PDF, DOCX, and XLSX files.
 
     Parameters:
     - files: A string representing a single file path or a list of strings representing multiple file paths.
 
     Returns:
-    - A list of Document objects loaded from the provided PDF files.
+    - A list of Document objects loaded from the provided files.
 
     Raises:
     - FileNotFoundError: If any of the provided file paths do not exist.
     - Exception: For any other issues encountered during file loading.
-
-    The function applies post-processing steps such as cleaning extra whitespace and grouping broken paragraphs.
     """
     if not isinstance(files, list):
         files = [files]  # Ensure 'files' is always a list
@@ -84,24 +94,15 @@ def load_pdf(files="data/2306.02707.pdf"):
     documents = []
     for file_path in files:
         try:
-            # Open the PDF file
-            doc = fitz.open(file_path)
-            text = ""
-            # Extract text from each page
-            for page_num in range(len(doc)):
-                page = doc.load_page(page_num)
-                text += page.get_text("text")
-
-            # Apply post-processing steps
-            text = clean_extra_whitespace(text)
-            text = group_broken_paragraphs(text)
-
-            # Create a Document object
-            document = Document(
-                page_content=text,
-                metadata={"source": file_path}
-            )
-            documents.append(document)
+            file_extension = os.path.splitext(file_path)[1].lower()
+            if file_extension == '.pdf':
+                documents.extend(load_pdf(file_path))
+            elif file_extension == '.docx':
+                documents.extend(load_docx(file_path))
+            elif file_extension == '.xlsx':
+                documents.extend(load_xlsx(file_path))
+            else:
+                print(f"Unsupported file type: {file_extension}")
         except FileNotFoundError as e:
             print(f"File not found: {e.filename}")
             raise
@@ -110,6 +111,72 @@ def load_pdf(files="data/2306.02707.pdf"):
             raise
 
     return documents
+
+def load_docx(file_path):
+    """
+    Loads text from a DOCX file.
+    """
+    doc = docx.Document(file_path)
+    text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+    text = clean_extra_whitespace(text)
+    text = group_broken_paragraphs(text)
+    return [Document(page_content=text, metadata={"source": file_path})]
+
+def load_xlsx(file_path):
+    """
+    Loads text from an XLSX file.
+    """
+    wb = openpyxl.load_workbook(file_path)
+    text = ""
+    for sheet in wb.sheetnames:
+        ws = wb[sheet]
+        for row in ws.iter_rows(values_only=True):
+            text += " ".join([str(cell) for cell in row if cell is not None]) + "\n"
+    text = clean_extra_whitespace(text)
+    text = group_broken_paragraphs(text)
+    return [Document(page_content=text, metadata={"source": file_path})]
+    
+def load_pdf(file_path):
+    """
+    Loads documents from a PDF file using PyMuPDF.
+
+    Parameters:
+    - file_path: A string representing the path to the PDF file.
+
+    Returns:
+    - A list containing a single Document object loaded from the provided PDF file.
+
+    Raises:
+    - FileNotFoundError: If the provided file path does not exist.
+    - Exception: For any other issues encountered during file loading.
+
+    The function applies post-processing steps such as cleaning extra whitespace and grouping broken paragraphs.
+    """
+    try:
+        # Open the PDF file
+        doc = fitz.open(file_path)
+        text = ""
+        # Extract text from each page
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text += page.get_text("text")
+
+        # Apply post-processing steps
+        text = clean_extra_whitespace(text)
+        text = group_broken_paragraphs(text)
+
+        # Create a Document object
+        document = Document(
+            page_content=text,
+            metadata={"source": file_path}
+        )
+        return [document]
+    except FileNotFoundError:
+        print(f"File not found: {file_path}")
+        raise
+    except Exception as e:
+        print(f"An error occurred while loading {file_path}: {e}")
+        raise
 
 def clean_extra_whitespace(text):
     """
@@ -139,7 +206,7 @@ def group_broken_paragraphs(text):
 def split_documents(
     chunk_size: int,
     knowledge_base,
-    tokenizer_name= "openai",
+    tokenizer_name= EMBEDDING_MODEL_NAME,
 ):
     """
     Splits documents into chunks of maximum size `chunk_size` tokens, using a specified tokenizer.
@@ -189,7 +256,7 @@ def split_documents(
 
 
 def load_embedding_model(
-    model_name = "openai", 
+    model_name = EMBEDDING_MODEL_NAME, 
 ):
     """
     Loads an embedding model from the Hugging Face repository with specified configurations.
@@ -210,7 +277,7 @@ def load_embedding_model(
         if model_name=="openai":
              embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
         else:
-            model_name="BAAI/bge-large-en-v1.5"
+            model_name=EMBEDDING_MODEL_NAME #"BAAI/bge-large-en-v1.5"
             if torch.backends.mps.is_available():
                 device = "mps"
             elif torch.cuda.is_available():
@@ -243,7 +310,9 @@ def retrieve_context(query, retriever):
     - A list of reranked documents deemed relevant to the query.
 
     """
-    retrieved_docs = retriever.get_relevant_documents(query)
+
+    #retrieved_docs = retriever.get_relevant_documents(query)
+    retrieved_docs = retriever.invoke(input=query)
 
     return retrieved_docs
 
@@ -270,9 +339,9 @@ def get_ensemble_retriever(docs, embedding_model, collection_name="test", top_k=
         raise ValueError("top_k must be at least 1")
 
     try:
-        vector_store = Chroma.from_documents(
-            docs, 
-            embedding_model,
+        vector_store = Milvus.from_documents(
+            documents=docs, 
+            embedding=embedding_model,
             collection_name=collection_name,
         )
 
@@ -334,7 +403,8 @@ def create_parent_retriever(
     Raises:
     - ValueError: If any input parameter is invalid.
     """
-        
+
+    ''' 
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
         chunk_size=512,
@@ -351,13 +421,38 @@ def create_parent_retriever(
         model_name="gpt-4",
         is_separator_regex=False,
     )
+    '''
+    chunk_size = 512
+    parent_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+        AutoTokenizer.from_pretrained(EMBEDDING_MODEL_NAME),
+        chunk_size=chunk_size,
+        chunk_overlap=int(chunk_size / 10),
+        add_start_index=True,
+        strip_whitespace=True,
+        separators=["\n\n\n", "\n\n", "\n", ".", ""],
+        is_separator_regex=False,
+    )
+
+    # This text splitter is used to create the child documents
+    child_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
+        AutoTokenizer.from_pretrained(EMBEDDING_MODEL_NAME),
+        chunk_size=int(chunk_size / 2),
+        chunk_overlap=int(chunk_size / 10),
+        add_start_index=True,
+        strip_whitespace=True,
+        separators=["\n\n\n", "\n\n", "\n", ".", ""],
+        is_separator_regex=False,
+    )
 
     # The vectorstore to use to index the child chunks
+    '''
     vectorstore = Chroma(
         collection_name=collection_name,
         embedding_function=embeddings_model,
         persist_directory=persist_directory,
     )
+    '''
+    vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model, auto_id=True) #, persist_directory=persist_directory)
 
     # The storage layer for the parent documents
     store = InMemoryStore()
@@ -390,6 +485,8 @@ def rerank_docs(query, retrieved_docs, reranker_model):
 
     if reranker_model=="gpt":
         ranked_docs = reranking_gpt(retrieved_docs, query)
+    elif reranker_model=="german":
+        ranked_docs = reranking_german(retrieved_docs, query)
     elif reranker_model=="cohere":
         ranked_docs = reranking_cohere(retrieved_docs, query)
     elif reranker_model=="colbert":
@@ -415,7 +512,8 @@ def retrieve_context_reranked(query, retriever, reranker_model="gpt4"):
 
     """
 
-    retrieved_docs = retriever.get_relevant_documents(query)
+    #retrieved_docs = retriever.get_relevant_documents(query)
+    retrieved_docs = retriever.invoke(input=query)
 
     if len(retrieved_docs) == 0:
         print(
@@ -426,3 +524,30 @@ def retrieve_context_reranked(query, retriever, reranker_model="gpt4"):
     )
     return reranked_docs
 
+def azure_openai_call(prompt):
+    # Si el prompt es un objeto HumanMessage, extraemos su contenido
+    if isinstance(prompt, HumanMessage):
+        prompt_content = prompt.content
+    else:
+        prompt_content = str(prompt)
+    
+    response = load_llm_client().chat.completions.create(
+        model=AZURE_OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": "Du bist ein hilfreicher Assistent."},
+            {"role": "user", "content": prompt_content}
+        ]
+    )
+    return response.choices[0].message.content
+
+def load_llm_client():
+    dotenv_path = Path(ENV_VAR_PATH)
+    load_dotenv(dotenv_path=dotenv_path)
+
+    # Configurar el cliente de Azure OpenAI
+    client = AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
+        api_version="2023-05-15",
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+    return client
