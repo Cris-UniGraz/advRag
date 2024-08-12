@@ -302,7 +302,9 @@ def get_fusion_retriever(docs, embedding_model, collection_name="test", top_k=3)
         print(f"An error occurred while initializing the retriever: {e}")
         raise
 
+
 def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", top_k=3):
+    
     """
     Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
 
@@ -318,26 +320,19 @@ def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", t
     - ValueError: If any input parameter is invalid.
     """
 
-    # Hybrid search
-    # Example of parameter validation (optional)
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
 
     try:
-        vector_store = Milvus.from_documents(
-            documents=docs, 
-            embedding=embedding_model,
-            collection_name=collection_name,
-        )
-
-        retriever = vector_store.as_retriever(search_kwargs={"k":top_k})
-        # retriever.k = top_k
-
-        # add keyword search 
+        # Usar la función modificada create_parent_retriever
+        base_parent_retriever = create_parent_retriever(docs, embedding_model, collection_name, top_k)
+        
+        # El resto de la función permanece igual
+        retriever = base_parent_retriever.vectorstore.as_retriever(search_kwargs={"k": top_k})
+        
         keyword_retriever = BM25Retriever.from_documents(docs)
-        keyword_retriever.k =  top_k # 3
+        keyword_retriever.k = top_k
 
-        base_parent_retriever = create_parent_retriever(docs, embedding_model, collection_name)
         multi_query_retriever = create_multi_query_retriever(base_parent_retriever, llm)
 
         ensemble_retriever = EnsembleRetriever(retrievers=[retriever,
@@ -348,6 +343,7 @@ def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", t
     except Exception as e:
         print(f"An error occurred while initializing the retriever: {e}")
         raise
+
 
 def create_multi_query_retriever(base_retriever, llm):
     """
@@ -366,6 +362,9 @@ def create_multi_query_retriever(base_retriever, llm):
     return multiquery_retriever
 
 
+from langchain_milvus import Milvus
+from pymilvus import connections, Collection, utility
+
 def create_parent_retriever(
     docs, 
     embeddings_model,
@@ -373,7 +372,7 @@ def create_parent_retriever(
     top_k=5,
     persist_directory=None,
 ):
-    
+
     """
     Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
 
@@ -391,7 +390,21 @@ def create_parent_retriever(
     - ValueError: If any input parameter is invalid.
     """
 
-    
+    # Establecer conexión con Milvus
+    connections.connect()
+
+    # Verificar si la colección ya existe
+    if utility.has_collection(collection_name):
+        print(f"Loading collection '{collection_name}'...")
+        vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model)
+    else:
+        print(f"Collection '{collection_name}' doesn't exist. Creating and adding documents...")
+        vectorstore = Milvus.from_documents(
+            documents=docs,
+            embedding=embeddings_model,
+            collection_name=collection_name,
+        )
+
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
         chunk_size=512,
@@ -400,7 +413,6 @@ def create_parent_retriever(
         is_separator_regex=False,
     )
 
-    # This text splitter is used to create the child documents
     child_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
         chunk_size=256,
@@ -409,10 +421,6 @@ def create_parent_retriever(
         is_separator_regex=False,
     )
 
-    # The vectorstore to use to index the child chunks
-    vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model, auto_id=True)
-
-    # The storage layer for the parent documents
     store = InMemoryStore()
     retriever = ParentDocumentRetriever(
         vectorstore=vectorstore,
@@ -421,7 +429,10 @@ def create_parent_retriever(
         parent_splitter=parent_splitter,
         k=top_k,
     )
-    retriever.add_documents(docs)
+
+    # Solo agregar documentos si la colección es nueva
+    if not utility.has_collection(collection_name):
+        retriever.add_documents(docs)
 
     return retriever
 
