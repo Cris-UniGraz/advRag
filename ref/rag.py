@@ -258,7 +258,7 @@ def retrieve_context(query, retriever):
     return retrieved_docs
 
 
-def get_ensemble_retriever(docs, embedding_model, collection_name="test", top_k=3):
+def get_fusion_retriever(docs, embedding_model, collection_name="test", top_k=3):
     """
     Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
 
@@ -302,6 +302,52 @@ def get_ensemble_retriever(docs, embedding_model, collection_name="test", top_k=
         print(f"An error occurred while initializing the retriever: {e}")
         raise
 
+def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", top_k=3):
+    """
+    Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
+
+    Parameters:
+    - docs: A list of documents to be indexed and retrieved.
+    - embedding_model: The embedding model to use for generating document embeddings.
+    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
+
+    Returns:
+    - A retriever object configured to retrieve the top_k relevant documents.
+
+    Raises:
+    - ValueError: If any input parameter is invalid.
+    """
+
+    # Hybrid search
+    # Example of parameter validation (optional)
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1")
+
+    try:
+        vector_store = Milvus.from_documents(
+            documents=docs, 
+            embedding=embedding_model,
+            collection_name=collection_name,
+        )
+
+        retriever = vector_store.as_retriever(search_kwargs={"k":top_k})
+        # retriever.k = top_k
+
+        # add keyword search 
+        keyword_retriever = BM25Retriever.from_documents(docs)
+        keyword_retriever.k =  top_k # 3
+
+        base_parent_retriever = create_parent_retriever(docs, embedding_model, collection_name)
+        multi_query_retriever = create_multi_query_retriever(base_parent_retriever, llm)
+
+        ensemble_retriever = EnsembleRetriever(retrievers=[retriever,
+                                                    keyword_retriever, multi_query_retriever],
+                                        weights=[0.33, 0.34, 0.33])
+
+        return ensemble_retriever
+    except Exception as e:
+        print(f"An error occurred while initializing the retriever: {e}")
+        raise
 
 def create_multi_query_retriever(base_retriever, llm):
     """
@@ -362,29 +408,7 @@ def create_parent_retriever(
         model_name="gpt-4",
         is_separator_regex=False,
     )
-    '''
-    chunk_size = 512
-    parent_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-        AutoTokenizer.from_pretrained(EMBEDDING_MODEL_NAME),
-        chunk_size=chunk_size,
-        chunk_overlap=100, #int(chunk_size / 10),
-        add_start_index=True,
-        strip_whitespace=True,
-        separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        is_separator_regex=False,
-    )
 
-    # This text splitter is used to create the child documents
-    child_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-        AutoTokenizer.from_pretrained(EMBEDDING_MODEL_NAME),
-        chunk_size=int(chunk_size / 2),
-        chunk_overlap=50, #int(chunk_size / 10),
-        add_start_index=True,
-        strip_whitespace=True,
-        separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        is_separator_regex=False,
-    )
-    ''' 
     # The vectorstore to use to index the child chunks
     vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model, auto_id=True)
 

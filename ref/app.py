@@ -11,7 +11,8 @@ from rag import (
     load_documents,
     retrieve_context_reranked,
     create_multi_query_retriever,
-    azure_openai_call
+    azure_openai_call,
+    get_ensemble_retriever
 )
 
 # Al principio del archivo, después de las importaciones
@@ -32,8 +33,13 @@ def main(
     # print(f"\n\n>>> Documentos a procesar: {len(docs)}\n\n")
 
     embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
-    base_retriever = create_parent_retriever(docs, embedding_model, collection_name=COLLECTION_NAME)
-    retriever = create_multi_query_retriever(base_retriever, llm)
+
+    #Parent Document Retrieval
+    #base_retriever = create_parent_retriever(docs, embedding_model, collection_name=COLLECTION_NAME)
+    #retriever = create_multi_query_retriever(base_retriever, llm)
+
+    #Fusion Retrieval
+    retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=3)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
