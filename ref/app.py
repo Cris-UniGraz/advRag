@@ -39,7 +39,7 @@ def main(
     #retriever = create_multi_query_retriever(base_retriever, llm)
 
     #Fusion Retrieval
-    retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=3)
+    retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=5)
 
     prompt_template = ChatPromptTemplate.from_template(
         (

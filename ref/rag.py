@@ -419,7 +419,7 @@ def create_parent_retriever(
         docstore=store,
         child_splitter=child_splitter,
         parent_splitter=parent_splitter,
-        k=10,
+        k=top_k,
     )
     retriever.add_documents(docs)
 
