@@ -483,6 +483,8 @@ def retrieve_context_reranked(query, retriever, reranker_model):
 
     retrieved_docs = retriever.invoke(input=query)
 
+    #print(type(retrieved_docs), type(retrieved_docs[0]) if retrieved_docs else None)
+
     if len(retrieved_docs) == 0:
         print(
             f"Couldn't retrieve any relevant document with the query `{query}`. Try modifying your question!"
@@ -490,6 +492,11 @@ def retrieve_context_reranked(query, retriever, reranker_model):
     reranked_docs = rerank_docs(
         query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model
     )
+
+    if len(reranked_docs) == 0:
+        print(
+            f"The reranked documents are 0."
+        )
     return reranked_docs
 
 def azure_openai_call(prompt):

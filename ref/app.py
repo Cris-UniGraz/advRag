@@ -68,9 +68,9 @@ def main(
         # print(f">>> Este es el contexto: {context}")
         
         text = ""
-        for i,chunk in enumerate(context):
+        for i,document in enumerate(context):
             if i < MAX_CHUNKS_CONSIDERED:
-                text = text +"\n"+ chunk
+                text = text +"\n"+ document.page_content
             else:
                 break
 
@@ -79,14 +79,18 @@ def main(
             print(e, end="")
         print("\n\n\n")
 
-        show_sources = False
+        show_sources = True
         if show_sources:
 
-            print("\n\n\n--------------------------------CONTEXT-------------------------------------")
+            print("\n\n\n--------------------------------SOURCES-------------------------------------")
 
-            for i,chunk in enumerate(context):
+            for i,document in enumerate(context):
                 print(f"-----------------------------------Chunk: {i}--------------------------------------")
-                print(f"Context: {chunk}")
+                # Extraer solo el nombre del archivo con su extensión
+                file_path = document.metadata.get("source", "Unknown source")
+                file_name = os.path.basename(file_path)
+                print(f"Source: {file_name}")
+                #print(f"Source: {document.metadata['source']}")
 
 
 

@@ -7,6 +7,7 @@ import json
 import cohere
 import os
 from dotenv import load_dotenv
+from langchain.docstore.document import Document
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -68,7 +69,6 @@ def reranking_gpt(similar_chunks, query):
 
 
 def reranking_german(similar_chunks, query):
-
     start = time.time()
     scores = []
 
@@ -89,18 +89,21 @@ def reranking_german(similar_chunks, query):
         score = maxsim(query_embedding.unsqueeze(0), document_embedding)
         scores.append({
             "score": score.item(),
-            "document": document.page_content,
+            "document": document,
         })
 
     print(f"Took {time.time() - start} seconds to re-rank documents with {GERMAN_RERANKING_MODEL_NAME}.")
 
-    # Sort the scores by highest to lowest and print
+    # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
-    documents = []
-    for idx, r in enumerate(sorted_data):
-        documents.append(f"{r['document']}")
     
-    return documents
+    # Create a list of Document objects
+    reranked_documents = [
+        Document(page_content=r['document'].page_content, metadata=r['document'].metadata)
+        for r in sorted_data
+    ]
+    
+    return reranked_documents
 
 def reranking_colbert(similar_chunks, query):
 
