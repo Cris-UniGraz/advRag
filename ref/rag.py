@@ -55,25 +55,40 @@ def load_docx(file_path):
     """
     Loads text from a DOCX file.
     """
+
     doc = docx.Document(file_path)
-    text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
-    text = clean_extra_whitespace(text)
-    text = group_broken_paragraphs(text)
-    return [Document(page_content=text, metadata={"source": file_path})]
+    documents = []
+    for page_num, paragraph in enumerate(doc.paragraphs):
+        text = clean_extra_whitespace(paragraph.text)
+        text = group_broken_paragraphs(text)
+        if text:  # Solo agregar si el texto no está vacío
+            document = Document(
+                page_content=text,
+                metadata={"source": file_path, "page": page_num + 1}
+            )
+            documents.append(document)
+    return documents
 
 def load_xlsx(file_path):
     """
-    Loads text from an XLSX file.
+    Loads text from an XLSX file, including sheet names in metadata.
     """
     wb = openpyxl.load_workbook(file_path)
-    text = ""
-    for sheet in wb.sheetnames:
-        ws = wb[sheet]
+    documents = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        text = ""
         for row in ws.iter_rows(values_only=True):
             text += " ".join([str(cell) for cell in row if cell is not None]) + "\n"
-    text = clean_extra_whitespace(text)
-    text = group_broken_paragraphs(text)
-    return [Document(page_content=text, metadata={"source": file_path})]
+        text = clean_extra_whitespace(text)
+        text = group_broken_paragraphs(text)
+        if text:  # Solo agregar si el texto no está vacío
+            document = Document(
+                page_content=text,
+                metadata={"source": file_path, "sheet": sheet_name}
+            )
+            documents.append(document)
+    return documents
     
 def load_pdf(file_path):
     """
@@ -91,25 +106,21 @@ def load_pdf(file_path):
 
     The function applies post-processing steps such as cleaning extra whitespace and grouping broken paragraphs.
     """
+
     try:
-        # Open the PDF file
         doc = fitz.open(file_path)
-        text = ""
-        # Extract text from each page
+        documents = []
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
-            text += page.get_text("text")
-
-        # Apply post-processing steps
-        text = clean_extra_whitespace(text)
-        text = group_broken_paragraphs(text)
-
-        # Create a Document object
-        document = Document(
-            page_content=text,
-            metadata={"source": file_path}
-        )
-        return [document]
+            text = page.get_text("text")
+            text = clean_extra_whitespace(text)
+            text = group_broken_paragraphs(text)
+            document = Document(
+                page_content=text,
+                metadata={"source": file_path, "page": page_num + 1}
+            )
+            documents.append(document)
+        return documents
     except FileNotFoundError:
         print(f"File not found: {file_path}")
         raise

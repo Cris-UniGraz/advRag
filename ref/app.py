@@ -54,44 +54,39 @@ def main(
     )
 
     chain = prompt_template | llm | StrOutputParser()
-
+  
     while True:
-        query = input("User Input: ")
+        query = input("Benutzer-Eingabe: ")
 
-        if query=="exit":
+        if query == "exit":
             break
 
         context = retrieve_context_reranked(
-            query, retriever=retriever, reranker_model=RERANKING_TYPE #"cohere"
+            query, retriever=retriever, reranker_model=RERANKING_TYPE
         )
-        
-        # print(f">>> Este es el contexto: {context}")
-        
+
         text = ""
-        for i,document in enumerate(context):
+        sources = []
+        for i, document in enumerate(context):
             if i < MAX_CHUNKS_CONSIDERED:
-                text = text +"\n"+ document.page_content
+                text += "\n" + document.page_content
+                source = f"{os.path.basename(document.metadata['source'])} (Seite {document.metadata.get('page', 'N/A')})"
+                if source not in sources:
+                    sources.append(source)
             else:
                 break
 
-        print("\n\nLLM Response: ", end="")
+        print("\n\nLLM-Antwort: ", end="")
         for e in chain.stream({"context": text, "question": query}):
             print(e, end="")
         print("\n\n\n")
 
         show_sources = True
+
         if show_sources:
-
-            print("\n\n\n--------------------------------SOURCES-------------------------------------")
-
-            for i,document in enumerate(context):
-                print(f"-----------------------------------Chunk: {i}--------------------------------------")
-                # Extraer solo el nombre del archivo con su extensión
-                file_path = document.metadata.get("source", "Unknown source")
-                file_name = os.path.basename(file_path)
-                print(f"Source: {file_name}")
-                #print(f"Source: {document.metadata['source']}")
-
+            print("\n\n\n--------------------------------QUELLEN-------------------------------------")
+            for source in sources:
+                print(f"Dokument: {source}")
 
 
 if __name__ == "__main__":
