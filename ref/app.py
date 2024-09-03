@@ -85,8 +85,14 @@ def main(
 
         if show_sources:
             print("\n\n\n--------------------------------QUELLEN-------------------------------------")
-            for source in sources:
-                print(f"Dokument: {source}")
+            for document in context:
+                source = os.path.basename(document.metadata['source'])
+                if document.metadata['source'].lower().endswith('.xlsx'):
+                    sheet = document.metadata.get('sheet', 'Unbekannt')
+                    print(f"Dokument: {source} (Blatt: {sheet})")
+                else:
+                    page = document.metadata.get('page', 'N/A')
+                    print(f"Dokument: {source} (Seite: {page})")
 
 
 if __name__ == "__main__":
