@@ -80,7 +80,7 @@ def main(
         print("\n\nLLM-Antwort: ", end="")
         for e in chain.stream({"context": text, "question": query}):
             print(e, end="")
-        print("\n\n\n")
+        print("\n\n")
 
         show_sources = True
 
@@ -94,7 +94,8 @@ def main(
                 else:
                     page = document.metadata.get('page', 'N/A')
                     print(f"Dokument: {source} (Seite: {page})")
-
+        
+        print("\n\n\n")
 
 if __name__ == "__main__":
 

@@ -406,10 +406,10 @@ def create_parent_retriever(
 
     # Verificar si la colección ya existe
     if utility.has_collection(collection_name):
-        print(f"Loading collection '{collection_name}'...")
+        print(f"Laden der Kollektion '{collection_name}'...")
         vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model)
     else:
-        print(f"Collection '{collection_name}' doesn't exist. Creating and adding documents...")
+        print(f"Die Kollektion '{collection_name}' existiert nicht. Erstellen und Hinzufügen von Dokumenten...")
         vectorstore = Milvus.from_documents(
             documents=docs,
             embedding=embeddings_model,
@@ -498,7 +498,7 @@ def retrieve_context_reranked(query, retriever, reranker_model):
 
     if len(retrieved_docs) == 0:
         print(
-            f"Couldn't retrieve any relevant document with the query `{query}`. Try modifying your question!"
+            f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. Versuche, deine Frage zu ändern!"
         )
     reranked_docs = rerank_docs(
         query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model
@@ -506,7 +506,7 @@ def retrieve_context_reranked(query, retriever, reranker_model):
 
     if len(reranked_docs) == 0:
         print(
-            f"The reranked documents are 0."
+            f"Die re-rankteten Dokumente sind 0."
         )
     return reranked_docs
 
