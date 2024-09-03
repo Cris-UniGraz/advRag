@@ -23,9 +23,10 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
+DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")
 
 def main(
-    directory: str = "C:/Pruebas/RAG Search/demo_docu", #"data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf"
+    directory: str = DIRECTORY_PATH #"C:/Pruebas/RAG Search/demo_docu", #"data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf"
 ):
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
     docs = load_documents(folder_path=directory)
