@@ -15,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 import torch
 from langchain_community.retrievers import BM25Retriever
 from langchain.retrievers import EnsembleRetriever
-from langchain.storage import InMemoryStore
+from langchain.storage import PostgresStore
 from langchain.retrievers import ParentDocumentRetriever
 from sentence_transformers import CrossEncoder
 from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
@@ -32,8 +32,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 from openai import AzureOpenAI
 from pymilvus import connections, Collection, utility
-from langchain.chains import HypotheticalDocumentEmbedder
-from tqdm import tqdm
+from sqlalchemy import create_engine
+from sqlalchemy import inspect
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -41,6 +41,17 @@ load_dotenv(ENV_VAR_PATH)
 
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
+
+# Función para crear la conexión a la base de datos PostgreSQL
+def create_postgres_connection():
+    db_username = os.getenv("DB_USERNAME")
+    db_password = os.getenv("DB_PASSWORD")
+    db_host = os.getenv("DB_HOST")
+    db_name = os.getenv("DB_NAME")
+    
+    connection_string = f"postgresql://{db_username}:{db_password}@{db_host}/{db_name}"
+    engine = create_engine(connection_string)
+    return engine
 
 def load_documents(folder_path):
     documents = []
@@ -58,39 +69,61 @@ def load_docx(file_path):
     """
     Loads text from a DOCX file.
     """
-    doc = docx.Document(file_path)
-    documents = []
-    for page_num, paragraph in enumerate(doc.paragraphs):
-        text = clean_extra_whitespace(paragraph.text)
-        text = group_broken_paragraphs(text)
-        if text:  # Only add if the text is not empty
-            document = Document(
-                page_content=text,
-                metadata={"source": file_path, "page": page_num + 1}
-            )
-            documents.append(document)
-    return documents
+
+    try:
+        doc = docx.Document(file_path)
+        documents = []
+        for page_num, paragraph in enumerate(doc.paragraphs):
+            text = clean_extra_whitespace(paragraph.text)
+            text = group_broken_paragraphs(text)
+            if text:  # Solo agregar si el texto no está vacío
+                document = Document(
+                    page_content=text,
+                    metadata={
+                        "source": file_path,
+                        "page": page_num + 1,
+                        "total_pages": len(doc.paragraphs),
+                        "file_type": "docx"
+                    }
+                )
+                documents.append(document)
+        return documents
+    except Exception as e:
+        print(f"An error occurred while loading {file_path}: {e}")
+        raise
 
 def load_xlsx(file_path):
     """
     Loads text from an XLSX file, including sheet names in metadata.
     """
-    wb = openpyxl.load_workbook(file_path)
-    documents = []
-    for sheet_num, sheet_name in enumerate(wb.sheetnames):
-        ws = wb[sheet_name]
-        text = ""
-        for row in ws.iter_rows(values_only=True):
-            text += " ".join([str(cell) for cell in row if cell is not None]) + "\n"
-        text = clean_extra_whitespace(text)
-        text = group_broken_paragraphs(text)
-        if text:  # Only add if the text is not empty
-            document = Document(
-                page_content=text,
-                metadata={"source": file_path, "sheet": sheet_name, "page": sheet_num + 1}
-            )
-            documents.append(document)
-    return documents
+
+    try:
+        wb = openpyxl.load_workbook(file_path)
+        documents = []
+        for sheet_num, sheet_name in enumerate(wb.sheetnames):
+            ws = wb[sheet_name]
+            text = ""
+            for row in ws.iter_rows(values_only=True):
+                text += " ".join([str(cell) for cell in row if cell is not None]) + "\n"
+            text = clean_extra_whitespace(text)
+            text = group_broken_paragraphs(text)
+            if text:  # Solo agregar si el texto no está vacío
+                document = Document(
+                    page_content=text,
+                    metadata={
+                        "source": file_path,
+                        "page": sheet_num + 1,  # Usando 'page' en lugar de 'sheet'
+                        "total_pages": len(wb.sheetnames),
+                        "file_type": "xlsx",
+                        "sheet_name": sheet_name  # Mantener el nombre de la hoja como información adicional
+                    }
+                )
+                documents.append(document)
+        return documents
+    except Exception as e:
+        print(f"An error occurred while loading {file_path}: {e}")
+        raise
+
     
 def load_pdf(file_path):
     """
@@ -119,13 +152,15 @@ def load_pdf(file_path):
             text = group_broken_paragraphs(text)
             document = Document(
                 page_content=text,
-                metadata={"source": file_path, "page": page_num + 1}
+                metadata={
+                    "source": file_path,
+                    "page": page_num + 1,
+                    "total_pages": len(doc),
+                    "file_type": "pdf"
+                }
             )
             documents.append(document)
         return documents
-    except FileNotFoundError:
-        print(f"File not found: {file_path}")
-        raise
     except Exception as e:
         print(f"An error occurred while loading {file_path}: {e}")
         raise
@@ -316,69 +351,18 @@ def get_fusion_retriever(docs, embedding_model, collection_name="test", top_k=3)
         raise
 
 
-def get_or_create_milvus_collection(docs, embedding_model, collection_name):
-    """
-    Obtiene una colección existente de Milvus o crea una nueva si no existe.
-    Incluye una barra de progreso para mostrar el avance de la inserción de documentos.
-
-    Parameters:
-    - docs: Documentos a insertar si se crea una nueva colección.
-    - embedding_model: Modelo de embedding a utilizar.
-    - collection_name: Nombre de la colección.
-
-    Returns:
-    - Una instancia de Milvus (vectorstore).
-    """
-    # Establecer conexión con Milvus
-    connections.connect()
-
-    # Verificar si la colección ya existe
-    if utility.has_collection(collection_name):
-        print(f"Cargando la colección existente: {collection_name}")
-        vectorstore = Milvus(collection_name=collection_name, embedding_function=embedding_model)
-    else:
-        print(f"La colección '{collection_name}' no existe. Creando y añadiendo documentos...")
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=512,
-            chunk_overlap=100,
-            add_start_index=True,
-            strip_whitespace=True,
-        )
-        all_splits = text_splitter.split_documents(docs)
-        docs_processed = []
-
-        # Iterar sobre los documentos y mostrar el progreso
-        for doc in tqdm(all_splits, desc="Procesando documentos"):
-            docs_processed.append(doc)
-
-        # Supongamos que Milvus.from_documents permite la inserción en lotes
-        batch_size = 1  # Tamaño del lote
-        num_batches = len(docs_processed) // batch_size + (1 if len(docs_processed) % batch_size != 0 else 0)
-
-        # Crear el vectorstore con los documentos procesados en lotes
-        for i in tqdm(range(num_batches), desc="Insertando documentos en Milvus"):
-            batch = docs_processed[i * batch_size:(i + 1) * batch_size]
-            Milvus.from_documents(documents=batch, embedding=embedding_model, collection_name=collection_name)
-
-        vectorstore = Milvus(collection_name=collection_name, embedding_function=embedding_model)
-
-    return vectorstore
-
 def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", top_k=3):
+    
     """
     Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
-    Now includes a HyDE retriever in the ensemble, using Milvus as the vector store.
-    Checks for existing collections before creating new ones.
 
     Parameters:
     - docs: A list of documents to be indexed and retrieved.
     - embedding_model: The embedding model to use for generating document embeddings.
-    - llm: Language model to use for HyDE.
-    - collection_name: The name of the collection.
     - top_k: The number of top relevant documents to retrieve. Defaults to 3.
 
     Returns:
-    - An ensemble retriever object configured to retrieve the top_k relevant documents.
+    - A retriever object configured to retrieve the top_k relevant documents.
 
     Raises:
     - ValueError: If any input parameter is invalid.
@@ -388,41 +372,25 @@ def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", t
         raise ValueError("top_k must be at least 1")
 
     try:
-        # Crear o cargar el vectorstore base
-        base_vectorstore = get_or_create_milvus_collection(docs, embedding_model, collection_name)
-        retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
+        # Usar la función modificada create_parent_retriever
+        base_parent_retriever = create_parent_retriever(docs, embedding_model, collection_name, top_k)
         
-        # Crear el retriever de palabras clave
+        # El resto de la función permanece igual
+        retriever = base_parent_retriever.vectorstore.as_retriever(search_kwargs={"k": top_k})
+        
         keyword_retriever = BM25Retriever.from_documents(docs)
         keyword_retriever.k = top_k
 
-        # Crear el retriever de consultas múltiples
-        multi_query_retriever = MultiQueryRetriever.from_llm(
-            retriever=retriever,
-            llm=llm
-        )
+        multi_query_retriever = create_multi_query_retriever(base_parent_retriever, llm)
 
-        # Crear o cargar el vectorstore HyDE
-        hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
-            llm,
-            embedding_model,
-            "web_search"
-        )
-        hyde_collection_name = f"{collection_name}_hyde"
-        hyde_vectorstore = get_or_create_milvus_collection(docs, hyde_embeddings, hyde_collection_name)
-        hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
-
-        # Crear el ensemble retriever con los cuatro retrievers
-        ensemble_retriever = EnsembleRetriever(
-            retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever],
-            weights=[0.25, 0.25, 0.25, 0.25]  # Pesos iguales para todos los retrievers
-        )
+        ensemble_retriever = EnsembleRetriever(retrievers=[retriever,
+                                                    keyword_retriever, multi_query_retriever],
+                                        weights=[0.33, 0.34, 0.33])
 
         return ensemble_retriever
     except Exception as e:
         print(f"An error occurred while initializing the retriever: {e}")
         raise
-
 
 
 def create_multi_query_retriever(base_retriever, llm):
@@ -441,9 +409,7 @@ def create_multi_query_retriever(base_retriever, llm):
 
     return multiquery_retriever
 
-
-from langchain_milvus import Milvus
-from pymilvus import connections, Collection, utility
+#####################################################################################
 
 def create_parent_retriever(
     docs, 
@@ -452,7 +418,6 @@ def create_parent_retriever(
     top_k=5,
     persist_directory=None,
 ):
-
     """
     Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
 
@@ -460,7 +425,7 @@ def create_parent_retriever(
     - docs: A list of documents to be indexed and retrieved.
     - embedding_model: The embedding model to use for generating document embeddings.
     - collection_name: The name of the collection
-    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
+    - top_k: The number of top relevant documents to retrieve. Defaults to 5.
     - persist_directory: directory where you want to store your vectorDB
 
     Returns:
@@ -473,16 +438,39 @@ def create_parent_retriever(
     # Establecer conexión con Milvus
     connections.connect()
 
-    # Verificar si la colección ya existe
-    if utility.has_collection(collection_name):
-        print(f"Laden der Kollektion '{collection_name}'...")
+    # Crear conexión a PostgreSQL
+    engine = create_postgres_connection()
+    inspector = inspect(engine)
+
+    # Nombre de la tabla en PostgreSQL
+    table_name = f"parent_documents_{collection_name}"
+
+    # Verificar si la colección ya existe en Milvus y PostgreSQL
+    milvus_exists = utility.has_collection(collection_name)
+    postgres_exists = inspector.has_table(table_name)
+
+    if milvus_exists and postgres_exists:
+        print(f"Cargando la colección '{collection_name}' de Milvus y PostgreSQL...")
         vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model)
+        store = PostgresStore(
+            engine=engine,
+            table_name=table_name,
+            key_column="id",
+            value_column="content"
+        )
     else:
-        print(f"Die Kollektion '{collection_name}' existiert nicht. Erstellen und Hinzufügen von Dokumenten...")
+        print(f"La colección '{collection_name}' no existe. Creando y añadiendo documentos...")
         vectorstore = Milvus.from_documents(
             documents=docs,
             embedding=embeddings_model,
             collection_name=collection_name,
+        )
+        store = PostgresStore.from_documents(
+            docs,
+            engine,
+            table_name=table_name,
+            key_column="id",
+            value_column="content"
         )
 
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
@@ -501,7 +489,6 @@ def create_parent_retriever(
         is_separator_regex=False,
     )
 
-    store = InMemoryStore()
     retriever = ParentDocumentRetriever(
         vectorstore=vectorstore,
         docstore=store,
@@ -511,11 +498,12 @@ def create_parent_retriever(
     )
 
     # Solo agregar documentos si la colección es nueva
-    if not utility.has_collection(collection_name):
+    if not milvus_exists or not postgres_exists:
         retriever.add_documents(docs)
 
     return retriever
 
+#####################################################################################################
 
 def rerank_docs(query, retrieved_docs, reranker_model):
     """
