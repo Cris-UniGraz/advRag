@@ -35,7 +35,7 @@ def maxsim(query_embedding, document_embedding):
     avg_max_sim = torch.mean(max_sim_scores, dim=1)
     return avg_max_sim
 
-def reranking_gpt(similar_chunks, query):
+def reranking_gpt(similar_chunks, query, top_k=5):
     start = time.time()
     client = AzureOpenAI(
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
@@ -61,13 +61,13 @@ def reranking_gpt(similar_chunks, query):
 
     reranked_documents = [
         Document(page_content=r['content'], metadata=similar_chunks[i].metadata)
-        for i, r in enumerate(sorted_data)
+        for i, r in enumerate(sorted_data[:top_k])
     ]
     
     return reranked_documents
 
 
-def reranking_german(similar_chunks, query):
+def reranking_german(similar_chunks, query, top_k=5):
     start = time.time()
     scores = []
 
@@ -96,15 +96,15 @@ def reranking_german(similar_chunks, query):
     # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
-    # Create a list of Document objects
+    # Create a list of top_k Document objects
     reranked_documents = [
         Document(page_content=r['document'].page_content, metadata=r['document'].metadata)
-        for r in sorted_data
+        for r in sorted_data[:top_k]
     ]
     
     return reranked_documents
 
-def reranking_colbert(similar_chunks, query):
+def reranking_colbert(similar_chunks, query, top_k=5):
     start = time.time()
     scores = []
 
@@ -130,13 +130,13 @@ def reranking_colbert(similar_chunks, query):
     
     reranked_documents = [
         Document(page_content=r['document'].page_content, metadata=r['document'].metadata)
-        for r in sorted_data
+        for r in sorted_data[:top_k]
     ]
     
     return reranked_documents
 
 
-def reranking_cohere(similar_chunks, query):
+def reranking_cohere(similar_chunks, query, top_k):
     co = cohere.Client(os.environ["COHERE_API_KEY"])
 
     documents = [doc.page_content for doc in similar_chunks]
@@ -144,8 +144,8 @@ def reranking_cohere(similar_chunks, query):
 
     results = co.rerank(query=query, 
                         documents=documents, 
-                        top_n=len(documents),  # Rerank all documents
-                        model="rerank-english-v3.0", 
+                        top_n=top_k,  # Rerank only top_k documents
+                        model="rerank-multilingual-v3.0", 
                         return_documents=True)
     print(f"Es dauerte {time.time() - start} Sekunden, um Dokumente mit Cohere zu re-ranken.")
 

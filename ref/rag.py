@@ -517,7 +517,7 @@ def create_parent_retriever(
     return retriever
 
 
-def rerank_docs(query, retrieved_docs, reranker_model):
+def rerank_docs(query, retrieved_docs, reranker_model, top_k=5):
     """
     Rerank the provided context chunks
 
@@ -533,20 +533,20 @@ def rerank_docs(query, retrieved_docs, reranker_model):
     """
 
     if reranker_model=="gpt":
-        ranked_docs = reranking_gpt(retrieved_docs, query)
+        ranked_docs = reranking_gpt(retrieved_docs, query, top_k)
     elif reranker_model=="german":
-        ranked_docs = reranking_german(retrieved_docs, query)
+        ranked_docs = reranking_german(retrieved_docs, query, top_k)
     elif reranker_model=="cohere":
-        ranked_docs = reranking_cohere(retrieved_docs, query)
+        ranked_docs = reranking_cohere(retrieved_docs, query, top_k)
     elif reranker_model=="colbert":
-        ranked_docs = reranking_colbert(retrieved_docs, query)
+        ranked_docs = reranking_colbert(retrieved_docs, query, top_k)
     else: # just return the original order
         ranked_docs = [(query, r.page_content) for r in retrieved_docs]
 
     return ranked_docs
 
 
-def retrieve_context_reranked(query, retriever, reranker_model):
+def retrieve_context_reranked(query, retriever, reranker_model, top_k=5):
     """
     Retrieve the context and rerank them based on the selected re-ranking model.
 
@@ -570,7 +570,7 @@ def retrieve_context_reranked(query, retriever, reranker_model):
             f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. Versuche, deine Frage zu ändern!"
         )
     reranked_docs = rerank_docs(
-        query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model
+        query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model, top_k=top_k
     )
 
     if len(reranked_docs) == 0:

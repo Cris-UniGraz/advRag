@@ -26,7 +26,7 @@ MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir 
 DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")
 
 def main(
-    directory: str = DIRECTORY_PATH #"C:/Pruebas/RAG Search/demo_docu", #"data/8a9ebed0-815a-469a-87eb-1767d21d8cec.pdf"
+    directory: str = DIRECTORY_PATH
 ):
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
     docs = load_documents(folder_path=directory)
@@ -35,18 +35,17 @@ def main(
 
     embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
 
-    #Parent Document Retrieval
-    #base_retriever = create_parent_retriever(docs, embedding_model, collection_name=COLLECTION_NAME)
-    #retriever = create_multi_query_retriever(base_retriever, llm)
-
     #Fusion Retrieval
-    retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=5)
+    retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
             """
             Du bist eine erfahrene virtuelle Assistentin der Universität Graz und kennst alle Informationen über die Universität Graz. Deine Aufgabe ist es, auf der Grundlage der Benutzerfrage Informationen aus dem bereitgestellten KONTEXT zu extrahieren. 
-            Denk Schritt für Schritt und verwende nur die Informationen aus dem KONTEXT, die für die Benutzerfrage relevant sind. Gib detaillierte Antworten auf Deutsch.  
+            Denk Schritt für Schritt und verwende nur die Informationen aus dem KONTEXT, die für die Benutzerfrage relevant sind. 
+            Wenn der KONTEXT keine Informationen enthält, um die ANFRAGE zu beantworten, gib nicht dein Wissen an, sondern antworte einfach:
+            „Ich habe derzeit nicht genügend Informationen, um die Anfrage zu beantworten. Bitte stelle eine andere Anfrage“.
+            Gib detaillierte Antworten auf Deutsch.
 
             ANFRAGE: ```{question}```\n
             KONTEXT: ```{context}```\n
@@ -63,7 +62,7 @@ def main(
             break
 
         context = retrieve_context_reranked(
-            query, retriever=retriever, reranker_model=RERANKING_TYPE
+            query, retriever=retriever, reranker_model=RERANKING_TYPE, top_k=MAX_CHUNKS_CONSIDERED
         )
 
         text = ""
@@ -86,14 +85,17 @@ def main(
 
         if show_sources:
             print("\n\n\n--------------------------------QUELLEN-------------------------------------")
-            for document in context:
-                source = os.path.basename(document.metadata['source'])
-                if document.metadata['source'].lower().endswith('.xlsx'):
-                    sheet = document.metadata.get('sheet', 'Unbekannt')
-                    print(f"Dokument: {source} (Blatt: {sheet})")
+            for i, document in enumerate(context):
+                if i < MAX_CHUNKS_CONSIDERED:
+                    source = os.path.basename(document.metadata['source'])
+                    if document.metadata['source'].lower().endswith('.xlsx'):
+                        sheet = document.metadata.get('sheet', 'Unbekannt')
+                        print(f"Dokument: {source} (Blatt: {sheet})")
+                    else:
+                        page = document.metadata.get('page', 'N/A')
+                        print(f"Dokument: {source} (Seite: {page})")
                 else:
-                    page = document.metadata.get('page', 'N/A')
-                    print(f"Dokument: {source} (Seite: {page})")
+                    break
         
         print("\n\n\n")
 
