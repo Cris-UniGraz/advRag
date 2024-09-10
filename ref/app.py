@@ -44,7 +44,7 @@ def main(
             Du bist eine erfahrene virtuelle Assistentin der Universität Graz und kennst alle Informationen über die Universität Graz. Deine Aufgabe ist es, auf der Grundlage der Benutzerfrage Informationen aus dem bereitgestellten KONTEXT zu extrahieren. 
             Denk Schritt für Schritt und verwende nur die Informationen aus dem KONTEXT, die für die Benutzerfrage relevant sind. 
             Wenn der KONTEXT keine Informationen enthält, um die ANFRAGE zu beantworten, gib nicht dein Wissen an, sondern antworte einfach:
-            „Ich habe derzeit nicht genügend Informationen, um die Anfrage zu beantworten. Bitte stelle eine andere Anfrage“.
+            Ich habe derzeit nicht genügend Informationen, um die Anfrage zu beantworten. Bitte stelle eine andere Anfrage.
             Gib detaillierte Antworten auf Deutsch.
 
             ANFRAGE: ```{question}```\n
@@ -84,7 +84,7 @@ def main(
         show_sources = True
 
         if show_sources:
-            print("\n\n\n--------------------------------QUELLEN-------------------------------------")
+            print("--------------------------------QUELLEN-------------------------------------")
             for i, document in enumerate(context):
                 if i < MAX_CHUNKS_CONSIDERED:
                     source = os.path.basename(document.metadata['source'])

@@ -54,7 +54,7 @@ def reranking_gpt(similar_chunks, query, top_k=5):
         ]
     )
 
-    print(f"Es dauerte {time.time() - start} Sekunden, um Dokumente mit {AZURE_OPENAI_MODEL} zu re-ranken.")
+    print("Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, AZURE_OPENAI_MODEL))
 
     scores = json.loads(response.choices[0].message.content)["documents"]
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
@@ -91,7 +91,7 @@ def reranking_german(similar_chunks, query, top_k=5):
             "document": document,
         })
 
-    print(f"Es dauerte {time.time() - start} Sekunden, um Dokumente mit {GERMAN_RERANKING_MODEL_NAME} zu re-ranken.")
+    print("Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
 
     # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
@@ -124,7 +124,7 @@ def reranking_colbert(similar_chunks, query, top_k=5):
             "document": document,
         })
 
-    print(f"Es dauerte {time.time() - start} Sekunden, um Dokumente mit ColBERT zu re-ranken.")
+    print("Es dauerte {:.2f} Sekunden, um Dokumente mit ColBERT zu re-ranken.".format(time.time() - start))
 
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
@@ -147,7 +147,8 @@ def reranking_cohere(similar_chunks, query, top_k):
                         top_n=top_k,  # Rerank only top_k documents
                         model="rerank-multilingual-v3.0", 
                         return_documents=True)
-    print(f"Es dauerte {time.time() - start} Sekunden, um Dokumente mit Cohere zu re-ranken.")
+
+    print("Es dauerte {:.2f} Sekunden, um Dokumente mit Cohere zu re-ranken.".format(time.time() - start))
 
     reranked_documents = [
         Document(page_content=r.document.text, metadata=similar_chunks[r.index].metadata)

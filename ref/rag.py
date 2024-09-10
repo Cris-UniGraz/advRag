@@ -20,7 +20,6 @@ from langchain.retrievers import ParentDocumentRetriever
 from sentence_transformers import CrossEncoder
 from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 
-
 import fitz  # PyMuPDF
 from langchain.docstore.document import Document
 import docx
@@ -35,12 +34,18 @@ from pymilvus import connections, Collection, utility
 from langchain.chains import HypotheticalDocumentEmbedder
 from tqdm import tqdm
 
+from langchain_community.storage.mongodb import MongoDBStore
+from pymongo import MongoClient
+
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
 
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
+
+MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
+MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
 
 def load_documents(folder_path):
     documents = []
@@ -334,10 +339,14 @@ def get_or_create_milvus_collection(docs, embedding_model, collection_name):
 
     # Verificar si la colección ya existe
     if utility.has_collection(collection_name):
-        print(f"Cargando la colección existente: {collection_name}")
-        vectorstore = Milvus(collection_name=collection_name, embedding_function=embedding_model)
+        print(f"Cargando la colección existente en Milvus: {collection_name}")
+        vectorstore = Milvus(
+            collection_name=collection_name,
+            embedding_function=embedding_model,
+            auto_id=True  # Agregar esta línea
+        )
     else:
-        print(f"La colección '{collection_name}' no existe. Creando y añadiendo documentos...")
+        print(f"La colección '{collection_name}' no existe en Milvus. Creando y añadiendo documentos...")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=512,
             chunk_overlap=100,
@@ -351,16 +360,12 @@ def get_or_create_milvus_collection(docs, embedding_model, collection_name):
         for doc in tqdm(all_splits, desc="Procesando documentos"):
             docs_processed.append(doc)
 
-        # Supongamos que Milvus.from_documents permite la inserción en lotes
-        batch_size = 1  # Tamaño del lote
-        num_batches = len(docs_processed) // batch_size + (1 if len(docs_processed) % batch_size != 0 else 0)
-
         # Crear el vectorstore con los documentos procesados en lotes
-        for i in tqdm(range(num_batches), desc="Insertando documentos en Milvus"):
-            batch = docs_processed[i * batch_size:(i + 1) * batch_size]
-            Milvus.from_documents(documents=batch, embedding=embedding_model, collection_name=collection_name)
-
-        vectorstore = Milvus(collection_name=collection_name, embedding_function=embedding_model)
+        vectorstore = Milvus.from_documents(
+            documents=docs_processed,
+            embedding=embedding_model,
+            collection_name=collection_name,
+        )
 
     return vectorstore
 
@@ -412,10 +417,13 @@ def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", t
         hyde_vectorstore = get_or_create_milvus_collection(docs, hyde_embeddings, hyde_collection_name)
         hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
 
-        # Crear el ensemble retriever con los cuatro retrievers
+        # Crear el Parent Document Retriever
+        parent_retriever = create_parent_retriever(docs, embedding_model, collection_name, top_k)
+
+        # Crear el ensemble retriever con los cinco retrievers
         ensemble_retriever = EnsembleRetriever(
-            retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever],
-            weights=[0.25, 0.25, 0.25, 0.25]  # Pesos iguales para todos los retrievers
+            retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
+            weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
         )
 
         return ensemble_retriever
@@ -447,24 +455,22 @@ from pymilvus import connections, Collection, utility
 
 def create_parent_retriever(
     docs, 
-    embeddings_model,
+    embedding_model,
     collection_name, 
     top_k=5,
-    persist_directory=None,
 ):
-
     """
-    Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
+    Initializes a Parent Document Retriever object to fetch the top_k most relevant documents based on cosine similarity.
+    Uses MongoDB for persistent storage of parent documents.
 
     Parameters:
     - docs: A list of documents to be indexed and retrieved.
     - embedding_model: The embedding model to use for generating document embeddings.
     - collection_name: The name of the collection
-    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
-    - persist_directory: directory where you want to store your vectorDB
+    - top_k: The number of top relevant documents to retrieve. Defaults to 5.
 
     Returns:
-    - A retriever object configured to retrieve the top_k relevant documents.
+    - A Parent Document Retriever object configured to retrieve the top_k relevant documents.
 
     Raises:
     - ValueError: If any input parameter is invalid.
@@ -473,17 +479,8 @@ def create_parent_retriever(
     # Establecer conexión con Milvus
     connections.connect()
 
-    # Verificar si la colección ya existe
-    if utility.has_collection(collection_name):
-        print(f"Laden der Kollektion '{collection_name}'...")
-        vectorstore = Milvus(collection_name=collection_name, embedding_function=embeddings_model)
-    else:
-        print(f"Die Kollektion '{collection_name}' existiert nicht. Erstellen und Hinzufügen von Dokumenten...")
-        vectorstore = Milvus.from_documents(
-            documents=docs,
-            embedding=embeddings_model,
-            collection_name=collection_name,
-        )
+    # Verificar si la colección ya existe en Milvus
+    vectorstore = get_or_create_milvus_collection(docs, embedding_model, f"{collection_name}_children")
 
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
@@ -501,7 +498,58 @@ def create_parent_retriever(
         is_separator_regex=False,
     )
 
-    store = InMemoryStore()
+    # Crear conexión a MongoDB
+    client = MongoClient(MONGODB_CONNECTION_STRING)
+    db = client[MONGODB_DATABASE_NAME]
+    mongo_collection = db[f'{collection_name}_parents']
+
+    # Verificar si la colección existe en MongoDB
+    if mongo_collection.count_documents({}) > 0:
+        print(f"La colección '{collection_name}_parents' ya existe en MongoDB. Cargando datos existentes...")
+        store = MongoDBStore(
+            connection_string=MONGODB_CONNECTION_STRING,
+            db_name=MONGODB_DATABASE_NAME,
+            collection_name=f'{collection_name}_parents'
+        )
+    else:
+        print(f"La colección '{collection_name}_parents' no existe en MongoDB. Creando y añadiendo documentos...")
+        store = MongoDBStore(
+            connection_string=MONGODB_CONNECTION_STRING,
+            db_name=MONGODB_DATABASE_NAME,
+            collection_name=f'{collection_name}_parents'
+        )
+        # Crear el retriever y agregar documentos
+        temp_retriever = ParentDocumentRetriever(
+            vectorstore=vectorstore,
+            docstore=store,
+            child_splitter=child_splitter,
+            parent_splitter=parent_splitter,
+            k=top_k,
+        )
+        
+        # Añadir barra de progreso para la carga de documentos en MongoDB
+        print("Procesando y cargando documentos en MongoDB...")
+        for i, doc in tqdm(enumerate(docs), total=len(docs), desc="Cargando documentos en MongoDB"):
+            # Asegurarse de que los metadatos existan
+            if doc.metadata is None:
+                doc.metadata = {}
+            
+            # Agregar 'start_index' y 'doc_id' a los metadatos
+            doc.metadata['start_index'] = i
+            doc.metadata['doc_id'] = str(i)
+            
+            # Verificar que el contenido del documento no esté vacío
+            if doc.page_content.strip():
+                try:
+                    # Añadir el documento al retriever
+                    temp_retriever.add_documents([doc])
+                except Exception as e:
+                    print(f"Error al procesar el documento {i}: {str(e)}")
+                    print(f"Contenido del documento: {doc.page_content[:100]}...")  # Imprimir los primeros 100 caracteres
+            else:
+                print(f"El documento {i} está vacío y será omitido.")
+
+    # Crear el retriever final
     retriever = ParentDocumentRetriever(
         vectorstore=vectorstore,
         docstore=store,
@@ -509,10 +557,6 @@ def create_parent_retriever(
         parent_splitter=parent_splitter,
         k=top_k,
     )
-
-    # Solo agregar documentos si la colección es nueva
-    if not utility.has_collection(collection_name):
-        retriever.add_documents(docs)
 
     return retriever
 
