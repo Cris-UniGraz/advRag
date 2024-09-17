@@ -386,14 +386,14 @@ def get_or_create_milvus_collection(docs, embedding_model, collection_name):
 
     # Verificar si la colección ya existe
     if utility.has_collection(collection_name):
-        print(f"Cargando la colección existente en Milvus: {collection_name}")
+        print(f"Laden der bestehenden Kollektion in Milvus:'{collection_name}'")
         vectorstore = Milvus(
             collection_name=collection_name,
             embedding_function=embedding_model,
             auto_id=True  # Agregar esta línea
         )
     else:
-        print(f"La colección '{collection_name}' no existe en Milvus. Creando y añadiendo documentos...")
+        print(f"Die Kollektion '{collection_name}' existiert nicht in Milvus. Erstellen und Hinzufügen von Dokumenten...")
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=512,
             chunk_overlap=100,
@@ -470,7 +470,8 @@ def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", t
         # Crear el ensemble retriever con los cinco retrievers
         ensemble_retriever = EnsembleRetriever(
             retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
-            weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
+            # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
+            weights=[0.1, 0.1, 0.3, 0.2, 0.3]
         )
 
         return ensemble_retriever
@@ -552,14 +553,14 @@ def create_parent_retriever(
 
     # Verificar si la colección existe en MongoDB
     if mongo_collection.count_documents({}) > 0:
-        print(f"La colección '{collection_name}_parents' ya existe en MongoDB. Cargando datos existentes...")
+        print(f"Laden der bestehenden Kollektion in MongoDB:'{collection_name}_parents'")
         store = MongoDBStore(
             connection_string=MONGODB_CONNECTION_STRING,
             db_name=MONGODB_DATABASE_NAME,
             collection_name=f'{collection_name}_parents'
         )
     else:
-        print(f"La colección '{collection_name}_parents' no existe en MongoDB. Creando y añadiendo documentos...")
+        print(f"Die Kollektion '{collection_name}_parents' existiert nicht in MongoDB. Erstellen und Hinzufügen von Dokumenten...")
         store = MongoDBStore(
             connection_string=MONGODB_CONNECTION_STRING,
             db_name=MONGODB_DATABASE_NAME,
@@ -608,7 +609,7 @@ def create_parent_retriever(
     return retriever
 
 
-def rerank_docs(query, retrieved_docs, reranker_model, top_k=5):
+def rerank_docs(query, retrieved_docs, reranker_model):
     """
     Rerank the provided context chunks
 
@@ -624,20 +625,20 @@ def rerank_docs(query, retrieved_docs, reranker_model, top_k=5):
     """
 
     if reranker_model=="gpt":
-        ranked_docs = reranking_gpt(retrieved_docs, query, top_k)
+        ranked_docs = reranking_gpt(retrieved_docs, query)
     elif reranker_model=="german":
-        ranked_docs = reranking_german(retrieved_docs, query, top_k)
+        ranked_docs = reranking_german(retrieved_docs, query)
     elif reranker_model=="cohere":
-        ranked_docs = reranking_cohere(retrieved_docs, query, top_k)
+        ranked_docs = reranking_cohere(retrieved_docs, query)
     elif reranker_model=="colbert":
-        ranked_docs = reranking_colbert(retrieved_docs, query, top_k)
+        ranked_docs = reranking_colbert(retrieved_docs, query)
     else: # just return the original order
         ranked_docs = [(query, r.page_content) for r in retrieved_docs]
 
     return ranked_docs
 
 
-def retrieve_context_reranked(query, retriever, reranker_model, top_k=5):
+def retrieve_context_reranked(query, retriever, reranker_model):
     """
     Retrieve the context and rerank them based on the selected re-ranking model.
 
@@ -661,7 +662,7 @@ def retrieve_context_reranked(query, retriever, reranker_model, top_k=5):
             f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. Versuche, deine Frage zu ändern!"
         )
     reranked_docs = rerank_docs(
-        query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model, top_k=top_k
+        query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model
     )
 
     if len(reranked_docs) == 0:

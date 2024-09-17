@@ -22,12 +22,19 @@ load_dotenv(ENV_VAR_PATH)
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
+MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
 DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")
+
+# Códigos ANSI para color azul y texto en negrita
+BLUE = "\033[34m"
+BOLD = "\033[1m"
+RESET = "\033[0m"  # Para resetear el formato
 
 def main(
     directory: str = DIRECTORY_PATH
 ):
+    
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
     docs = load_documents(folder_path=directory)
 
@@ -56,27 +63,36 @@ def main(
     chain = prompt_template | llm | StrOutputParser()
   
     while True:
-        query = input("Benutzer-Eingabe: ")
+        print("\n\n")
+
+        # query = input("Benutzer-Eingabe: ")
+        # Aplicar el estilo a la solicitud de entrada
+        styled_prompt = f"{BLUE}{BOLD}Benutzer-Eingabe: {RESET}"
+        # Solicitar la entrada al usuario con el estilo aplicado
+        query = input(styled_prompt)
 
         if query == "exit":
             break
 
         context = retrieve_context_reranked(
-            query, retriever=retriever, reranker_model=RERANKING_TYPE, top_k=MAX_CHUNKS_CONSIDERED
+            query, retriever=retriever, reranker_model=RERANKING_TYPE
         )
 
         text = ""
         sources = []
-        for i, document in enumerate(context):
-            if i < MAX_CHUNKS_CONSIDERED:
+        filtered_context = []
+        for document in context:
+            if len(filtered_context) < MAX_CHUNKS_CONSIDERED and document.metadata.get('reranking_score', 0) > MIN_RERANKING_SCORE:
                 text += "\n" + document.page_content
                 source = f"{os.path.basename(document.metadata['source'])} (Seite {document.metadata.get('page', 'N/A')})"
                 if source not in sources:
                     sources.append(source)
-            else:
-                break
+                filtered_context.append(document)
 
-        print("\n\nLLM-Antwort: ", end="")
+        # print("\n\nLLM-Antwort: ", end="")
+        # Imprimir texto azul en negrita
+        print(f"{BLUE}{BOLD}\n\nLLM-Antwort: {RESET}", end="")
+
         for e in chain.stream({"context": text, "question": query}):
             print(e, end="")
         print("\n\n")
@@ -85,19 +101,25 @@ def main(
 
         if show_sources:
             print("--------------------------------QUELLEN-------------------------------------")
-            for i, document in enumerate(context):
-                if i < MAX_CHUNKS_CONSIDERED:
-                    source = os.path.basename(document.metadata['source'])
-                    if document.metadata['source'].lower().endswith('.xlsx'):
-                        sheet = document.metadata.get('sheet', 'Unbekannt')
-                        print(f"Dokument: {source} (Blatt: {sheet})")
-                    else:
-                        page = document.metadata.get('page', 'N/A')
-                        print(f"Dokument: {source} (Seite: {page})")
+            for document in filtered_context:
+                source = os.path.basename(document.metadata['source'])
+                if document.metadata['source'].lower().endswith('.xlsx'):
+                    sheet = document.metadata.get('sheet', 'Unbekannt')
+                    print(f"Dokument: {source} (Blatt: {sheet})")
                 else:
-                    break
+                    page = document.metadata.get('page', 'N/A')
+                    print(f"Dokument: {source} (Seite: {page})")
         
         print("\n\n\n")
+
+        show_chunks = False
+        if show_chunks:
+            print("\n\n\n--------------------------------CONTEXT-------------------------------------")
+            for i, chunk in enumerate(filtered_context):
+                print(f"-----------------------------------Chunk: {i}--------------------------------------")
+                print(f"Context: {chunk.page_content}")
+                print(f"Reranking Score: {chunk.metadata.get('reranking_score', 'N/A')}")
+            print("\n\n\n")
     
 
 if __name__ == "__main__":

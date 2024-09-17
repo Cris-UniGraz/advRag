@@ -35,7 +35,7 @@ def maxsim(query_embedding, document_embedding):
     avg_max_sim = torch.mean(max_sim_scores, dim=1)
     return avg_max_sim
 
-def reranking_gpt(similar_chunks, query, top_k=5):
+def reranking_gpt(similar_chunks, query):
     start = time.time()
     client = AzureOpenAI(
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
@@ -61,50 +61,47 @@ def reranking_gpt(similar_chunks, query, top_k=5):
 
     reranked_documents = [
         Document(page_content=r['content'], metadata=similar_chunks[i].metadata)
-        for i, r in enumerate(sorted_data[:top_k])
+        for i, r in enumerate(sorted_data)
     ]
     
     return reranked_documents
 
 
-def reranking_german(similar_chunks, query, top_k=5):
+def reranking_german(similar_chunks, query):
     start = time.time()
     scores = []
-
     # Load the tokenizer and the model
     tokenizer = AutoTokenizer.from_pretrained(GERMAN_RERANKING_MODEL_NAME)
     model = AutoModel.from_pretrained(GERMAN_RERANKING_MODEL_NAME)
-
     # Encode the query
     query_encoding = tokenizer(query, return_tensors='pt')
     query_embedding = model(**query_encoding).last_hidden_state.mean(dim=1)
-
     # Get score for each document
     for document in similar_chunks:
         document_encoding = tokenizer(document.page_content, return_tensors='pt', truncation=True, max_length=512)
         document_embedding = model(**document_encoding).last_hidden_state
-
         # Calculate MaxSim score
         score = maxsim(query_embedding.unsqueeze(0), document_embedding)
         scores.append({
             "score": score.item(),
             "document": document,
         })
-
     print("Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
-
     # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
-    # Create a list of top_k Document objects
+    # Create a list of Document objects with score included in metadata
     reranked_documents = [
-        Document(page_content=r['document'].page_content, metadata=r['document'].metadata)
-        for r in sorted_data[:top_k]
+        Document(
+            page_content=r['document'].page_content, 
+            metadata={**r['document'].metadata, "reranking_score": r['score']}
+        )
+        for r in sorted_data
     ]
     
     return reranked_documents
 
-def reranking_colbert(similar_chunks, query, top_k=5):
+def reranking_colbert(similar_chunks, query):
     start = time.time()
     scores = []
 
@@ -130,13 +127,13 @@ def reranking_colbert(similar_chunks, query, top_k=5):
     
     reranked_documents = [
         Document(page_content=r['document'].page_content, metadata=r['document'].metadata)
-        for r in sorted_data[:top_k]
+        for r in sorted_data
     ]
     
     return reranked_documents
 
 
-def reranking_cohere(similar_chunks, query, top_k):
+def reranking_cohere(similar_chunks, query):
     co = cohere.Client(os.environ["COHERE_API_KEY"])
 
     documents = [doc.page_content for doc in similar_chunks]
@@ -144,7 +141,6 @@ def reranking_cohere(similar_chunks, query, top_k):
 
     results = co.rerank(query=query, 
                         documents=documents, 
-                        top_n=top_k,  # Rerank only top_k documents
                         model="rerank-multilingual-v3.0", 
                         return_documents=True)
 
