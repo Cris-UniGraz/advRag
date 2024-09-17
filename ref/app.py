@@ -12,7 +12,8 @@ from rag import (
     retrieve_context_reranked,
     create_multi_query_retriever,
     azure_openai_call,
-    get_ensemble_retriever
+    get_ensemble_retriever,
+    get_ensemble_retriever_check
 )
 
 # Al principio del archivo, después de las importaciones
@@ -34,16 +35,15 @@ RESET = "\033[0m"  # Para resetear el formato
 def main(
     directory: str = DIRECTORY_PATH
 ):
-    
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
-    docs = load_documents(folder_path=directory)
-
-    # print(f"\n\n>>> Documentos a procesar: {len(docs)}\n\n")
-
     embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
 
-    #Fusion Retrieval
-    retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
+    #docs = load_documents(folder_path=directory)
+
+    #Ensemble Retrieval
+    # retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
+
+    retriever = get_ensemble_retriever_check(directory, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
