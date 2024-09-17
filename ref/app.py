@@ -31,7 +31,6 @@ def main(
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
     docs = load_documents(folder_path=directory)
 
-    '''
     # print(f"\n\n>>> Documentos a procesar: {len(docs)}\n\n")
 
     embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
@@ -99,7 +98,7 @@ def main(
                     break
         
         print("\n\n\n")
-    '''
+    
 
 if __name__ == "__main__":
 
