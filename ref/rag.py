@@ -404,7 +404,7 @@ def get_or_create_milvus_collection(docs, embedding_model, collection_name):
         docs_processed = []
 
         # Iterar sobre los documentos y mostrar el progreso
-        for doc in tqdm(all_splits, desc="Procesando documentos"):
+        for doc in tqdm(all_splits, desc="Verarbeitung von Dokumenten"):
             docs_processed.append(doc)
 
         # Crear el vectorstore con los documentos procesados en lotes
@@ -675,10 +675,10 @@ def load_bm25(collection_name):
     
     if result and "keyword_retriever" in result:
         keyword_retriever = pickle.loads(result["keyword_retriever"])
-        print(f"BM25Retriever cargado desde MongoDB")
+        print(f"Laden der bestehenden Kollektion in MongDB:'{collection_name}'")
         return keyword_retriever
     else:
-        print(f"No se encontró el BM25Retriever en la colección '{collection_name}_keywords' en MongoDB")
+        print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB.")
         return None
 
 
@@ -776,8 +776,8 @@ def create_parent_retriever(
         )
         
         # Añadir barra de progreso para la carga de documentos en MongoDB
-        print("Procesando y cargando documentos en MongoDB...")
-        for i, doc in tqdm(enumerate(docs), total=len(docs), desc="Cargando documentos en MongoDB"):
+        print("Verarbeitung und Laden von Dokumenten in MongoDB...")
+        for i, doc in tqdm(enumerate(docs), total=len(docs), desc="Laden von Dokumenten in MongoDB"):
             # Asegurarse de que los metadatos existan
             if doc.metadata is None:
                 doc.metadata = {}
@@ -792,10 +792,10 @@ def create_parent_retriever(
                     # Añadir el documento al retriever
                     temp_retriever.add_documents([doc])
                 except Exception as e:
-                    print(f"Error al procesar el documento {i}: {str(e)}")
-                    print(f"Contenido del documento: {doc.page_content[:100]}...")  # Imprimir los primeros 100 caracteres
+                    print(f"Fehler bei der Verarbeitung von Dokument {i}: {str(e)}")
+                    print(f"Inhalt des Dokuments: {doc.page_content[:100]}...")  # Imprimir los primeros 100 caracteres
             else:
-                print(f"El documento {i} está vacío y será omitido.")
+                print(f"Das Dokument {i} ist leer und wird übersprungen.")
 
     # Crear el retriever final
     retriever = ParentDocumentRetriever(
