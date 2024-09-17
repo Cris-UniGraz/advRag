@@ -576,14 +576,16 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             # Cargar el vectorstore base
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
 
+            # Cargar el Keyword Retrieval
+            keyword_retriever = load_bm25(f'{collection_name}_keywords')
+
             # Cargar el vectorstore HyDE
             hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
                 llm,
                 embedding_model,
                 "web_search"
             )
-            hyde_collection_name = f"{collection_name}_hyde"
-            hyde_vectorstore = get_milvus_collection(hyde_embeddings, hyde_collection_name)
+            hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}_hyde")
 
             # Crear el Parent Document Retriever
             parent_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}_children")
@@ -596,14 +598,16 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             # Crear el vectorstore base
             base_vectorstore = create_milvus_collection(docs, embedding_model, collection_name)
 
+            # Crear el Keyword Retrieval
+            keyword_retriever = create_and_save_bm25(docs, f'{collection_name}_keywords')
+
             # Crear el vectorstore HyDE
             hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
                 llm,
                 embedding_model,
                 "web_search"
             )
-            hyde_collection_name = f"{collection_name}_hyde"
-            hyde_vectorstore = create_milvus_collection(docs, hyde_embeddings, hyde_collection_name)
+            hyde_vectorstore = create_milvus_collection(docs, hyde_embeddings, f"{collection_name}_hyde")
 
             # Crear el Parent Document Retriever
             parent_vectorstore = create_milvus_collection(docs, embedding_model, f"{collection_name}_children")
@@ -615,8 +619,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         
         # Crear el retriever de palabras clave
         # keyword_retriever = BM25Retriever.from_documents(docs)
-        # keyword_retriever.k = top_k
-        keyword_retriever = retriever
+        keyword_retriever.k = top_k
 
         # Crear el retriever de consultas múltiples
         multi_query_retriever = MultiQueryRetriever.from_llm(
@@ -639,6 +642,44 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         print(f"An error occurred while initializing the retriever: {e}")
         raise
 
+
+import pickle
+from pymongo import MongoClient
+from bson.binary import Binary
+from langchain_community.retrievers import BM25Retriever
+
+def get_mongo_collection(collection_name):
+    client = MongoClient(MONGODB_CONNECTION_STRING)
+    db = client[MONGODB_DATABASE_NAME]
+    return db[collection_name]
+
+# Función para crear y guardar el BM25Retriever en MongoDB
+def create_and_save_bm25(docs, collection_name):
+    print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB. Erstellen und Hinzufügen von Dokumenten...")
+    keyword_retriever = BM25Retriever.from_documents(docs)
+    serialized_retriever = Binary(pickle.dumps(keyword_retriever))
+    
+    keyword_collection = get_mongo_collection(collection_name)
+    keyword_collection.update_one(
+        {"name": "BM25Retriever"},
+        {"$set": {"keyword_retriever": serialized_retriever}},
+        upsert=True
+    )
+    print(f"BM25Retriever guardado en MongoDB.")
+    return keyword_retriever
+
+# Función para cargar el BM25Retriever desde MongoDB
+def load_bm25(collection_name):
+    keyword_collection = get_mongo_collection(collection_name)
+    result = keyword_collection.find_one({"name": "BM25Retriever"})
+    
+    if result and "keyword_retriever" in result:
+        keyword_retriever = pickle.loads(result["keyword_retriever"])
+        print(f"BM25Retriever cargado desde MongoDB")
+        return keyword_retriever
+    else:
+        print(f"No se encontró el BM25Retriever en la colección '{collection_name}_keywords' en MongoDB")
+        return None
 
 
 def create_multi_query_retriever(base_retriever, llm):
@@ -706,9 +747,9 @@ def create_parent_retriever(
     )
 
     # Crear conexión a MongoDB
-    client = MongoClient(MONGODB_CONNECTION_STRING)
-    db = client[MONGODB_DATABASE_NAME]
-    mongo_collection = db[f'{collection_name}_parents']
+    # client = MongoClient(MONGODB_CONNECTION_STRING)
+    # db = client[MONGODB_DATABASE_NAME]
+    mongo_collection = get_mongo_collection(f'{collection_name}_parents')
 
     # Verificar si la colección existe en MongoDB
     if mongo_collection.count_documents({}) > 0:
@@ -814,9 +855,9 @@ def create_parent_retriever_from_docs(
     )
 
     # Crear conexión a MongoDB
-    client = MongoClient(MONGODB_CONNECTION_STRING)
-    db = client[MONGODB_DATABASE_NAME]
-    mongo_collection = db[f'{collection_name}_parents']
+    # client = MongoClient(MONGODB_CONNECTION_STRING)
+    # db = client[MONGODB_DATABASE_NAME]
+    mongo_collection = get_mongo_collection(f'{collection_name}_parents')
 
     # Verificar si la colección existe en MongoDB
     if mongo_collection.count_documents({}) > 0:
