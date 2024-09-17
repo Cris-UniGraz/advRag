@@ -100,15 +100,15 @@ def main(
         show_sources = True
 
         if show_sources:
-            print("--------------------------------QUELLEN-------------------------------------")
+            print(f"{BLUE}{BOLD}--------------------------------QUELLEN-------------------------------------{RESET}")
             for document in filtered_context:
                 source = os.path.basename(document.metadata['source'])
                 if document.metadata['source'].lower().endswith('.xlsx'):
                     sheet = document.metadata.get('sheet', 'Unbekannt')
-                    print(f"Dokument: {source} (Blatt: {sheet})")
+                    print(f"- Dokument: {source} (Blatt: {sheet})")
                 else:
                     page = document.metadata.get('page', 'N/A')
-                    print(f"Dokument: {source} (Seite: {page})")
+                    print(f"- Dokument: {source} (Seite: {page})")
         
         print("\n\n\n")
 

@@ -675,7 +675,7 @@ def load_bm25(collection_name):
     
     if result and "keyword_retriever" in result:
         keyword_retriever = pickle.loads(result["keyword_retriever"])
-        print(f"Laden der bestehenden Kollektion in MongDB:'{collection_name}'")
+        print(f"Laden der bestehenden Kollektion in MongoDB:'{collection_name}'")
         return keyword_retriever
     else:
         print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB.")
