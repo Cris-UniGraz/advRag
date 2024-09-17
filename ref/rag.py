@@ -22,7 +22,9 @@ from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt,
 
 import fitz  # PyMuPDF
 from langchain.docstore.document import Document
+
 import docx
+
 import openpyxl
 from langchain_milvus import Milvus
 from langchain_core.runnables import RunnablePassthrough
@@ -50,31 +52,16 @@ MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
 def load_documents(folder_path):
     documents = []
     for file in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, file)
-        if file.lower().endswith('.pdf'):
-            documents.extend(load_pdf(file_path))
-        elif file.lower().endswith('.docx'):
-            documents.extend(load_docx(file_path))
-        elif file.lower().endswith('.xlsx'):
-            documents.extend(load_xlsx(file_path))
+        if not file.startswith('~$'):
+            file_path = os.path.join(folder_path, file)
+            if file.lower().endswith('.pdf'):
+                documents.extend(load_pdf(file_path))
+            elif file.lower().endswith('.docx'):
+                documents.extend(load_docx(file_path))
+            elif file.lower().endswith('.xlsx'):
+                documents.extend(load_xlsx(file_path))
     return documents
 
-def load_docx(file_path):
-    """
-    Loads text from a DOCX file.
-    """
-    doc = docx.Document(file_path)
-    documents = []
-    for page_num, paragraph in enumerate(doc.paragraphs):
-        text = clean_extra_whitespace(paragraph.text)
-        text = group_broken_paragraphs(text)
-        if text:  # Only add if the text is not empty
-            document = Document(
-                page_content=text,
-                metadata={"source": file_path, "page": page_num + 1}
-            )
-            documents.append(document)
-    return documents
 
 def load_xlsx(file_path):
     """
@@ -95,38 +82,64 @@ def load_xlsx(file_path):
                 metadata={"source": file_path, "sheet": sheet_name, "page": sheet_num + 1}
             )
             documents.append(document)
+
+    # Agregado
+    # print ("------------------------------------------------------------------------------>>>\nXlsx documents:")
+    # print (documents)
+
     return documents
-    
-def load_pdf(file_path):
+
+
+import fitz
+import re
+from typing import List
+from langchain.schema import Document
+
+def load_pdf(file_path: str) -> List[Document]:
     """
-    Loads documents from a PDF file using PyMuPDF.
-
-    Parameters:
-    - file_path: A string representing the path to the PDF file.
-
-    Returns:
-    - A list containing a single Document object loaded from the provided PDF file.
-
-    Raises:
-    - FileNotFoundError: If the provided file path does not exist.
-    - Exception: For any other issues encountered during file loading.
-
-    The function applies post-processing steps such as cleaning extra whitespace and grouping broken paragraphs.
+    Carga documentos de un archivo PDF usando PyMuPDF, divide en páginas y crea objetos Document con overlap.
     """
-
     try:
         doc = fitz.open(file_path)
+        pages = []
         documents = []
+        overlap_words = 40
+        
+        # Extraer y limpiar el texto de cada página
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
             text = page.get_text("text")
             text = clean_extra_whitespace(text)
             text = group_broken_paragraphs(text)
-            document = Document(
-                page_content=text,
-                metadata={"source": file_path, "page": page_num + 1}
+            pages.append(text)
+        
+        # Crear objetos Document con overlap
+        for i, page_content in enumerate(pages):
+            content_parts = []
+            
+            # Agregar overlap antes
+            if i > 0:
+                prev_page_words = pages[i-1].split()
+                content_parts.append(" ".join(prev_page_words[-overlap_words:]))
+            
+            # Agregar contenido de la página actual
+            content_parts.append(page_content)
+            
+            # Agregar overlap después
+            if i < len(pages) - 1:
+                next_page_words = pages[i+1].split()
+                content_parts.append(" ".join(next_page_words[:overlap_words]))
+            
+            # Crear objeto Document
+            doc = Document(
+                page_content=" ".join(content_parts),
+                metadata={"source": file_path, "page": i + 1}
             )
-            documents.append(document)
+            documents.append(doc)
+        
+        # print("------------------------------------------------------------------------------>>>\nPDF documents:")
+        # print(documents)
+        
         return documents
     except FileNotFoundError:
         print(f"File not found: {file_path}")
@@ -135,29 +148,63 @@ def load_pdf(file_path):
         print(f"An error occurred while loading {file_path}: {e}")
         raise
 
-def clean_extra_whitespace(text):
+
+import docx2txt
+import re
+from typing import List
+from langchain.schema import Document
+
+def split_into_pages(text: str) -> List[str]:
     """
-    Cleans extra whitespace from the provided text.
-
-    Parameters:
-    - text: A string representing the text to be cleaned.
-
-    Returns:
-    - A string with extra whitespace removed.
+    Divide el texto en páginas basándose en saltos de página.
     """
-    return ' '.join(text.split())
+    return text.split('\f')
 
-def group_broken_paragraphs(text):
+def load_docx(file_path: str) -> List[Document]:
     """
-    Groups broken paragraphs in the provided text.
-
-    Parameters:
-    - text: A string representing the text to be processed.
-
-    Returns:
-    - A string with broken paragraphs grouped.
+    Carga texto de un archivo DOCX, lo divide en páginas y crea objetos Document con overlap.
     """
-    return text.replace("\n", " ").replace("\r", " ")
+    # Extraer texto del archivo DOCX
+    text = docx2txt.process(file_path)
+    
+    # Limpiar y agrupar párrafos
+    text = clean_extra_whitespace(text)
+    text = group_broken_paragraphs(text)
+    
+    # Dividir en páginas
+    pages = split_into_pages(text)
+    
+    documents = []
+    overlap_words = 40
+
+    for i, page_content in enumerate(pages):
+        # Preparar el contenido con overlap
+        content_parts = []
+        
+        # Agregar overlap antes
+        if i > 0:
+            prev_page_words = pages[i-1].split()
+            content_parts.append(" ".join(prev_page_words[-overlap_words:]))
+        
+        # Agregar contenido de la página actual
+        content_parts.append(page_content)
+        
+        # Agregar overlap después
+        if i < len(pages) - 1:
+            next_page_words = pages[i+1].split()
+            content_parts.append(" ".join(next_page_words[:overlap_words]))
+        
+        # Crear objeto Document
+        doc = Document(
+            page_content=" ".join(content_parts),
+            metadata={"source": file_path, "page": i + 1}
+        )
+        documents.append(doc)
+    
+    # print("------------------------------------------------------------------------------>>>\nDocx documents:")
+    # print(documents)
+    
+    return documents
 
 
 def split_documents(
