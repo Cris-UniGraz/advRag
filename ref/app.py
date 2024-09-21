@@ -70,7 +70,8 @@ def main(
         styled_prompt = f"{BLUE}{BOLD}Benutzer-Eingabe: {RESET}"
         # Solicitar la entrada al usuario con el estilo aplicado
         query = input(styled_prompt)
-
+        print("\n")
+        
         if query == "exit":
             break
 

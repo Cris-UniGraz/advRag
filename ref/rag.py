@@ -577,7 +577,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
 
             # Cargar el Keyword Retrieval
-            keyword_retriever = load_bm25(f'{collection_name}_keywords')
+            # keyword_retriever = load_bm25(f'{collection_name}_keywords')
 
             # Cargar el vectorstore HyDE
             hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
@@ -599,7 +599,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             base_vectorstore = create_milvus_collection(docs, embedding_model, collection_name)
 
             # Crear el Keyword Retrieval
-            keyword_retriever = create_and_save_bm25(docs, f'{collection_name}_keywords')
+            # keyword_retriever = create_and_save_bm25(docs, f'{collection_name}_keywords')
 
             # Crear el vectorstore HyDE
             hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
@@ -619,6 +619,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         
         # Crear el retriever de palabras clave
         # keyword_retriever = BM25Retriever.from_documents(docs)
+        keyword_retriever = load_bm25(f'{collection_name}_parents')
         keyword_retriever.k = top_k
 
         # Crear el retriever de consultas múltiples
@@ -653,6 +654,7 @@ def get_mongo_collection(collection_name):
     db = client[MONGODB_DATABASE_NAME]
     return db[collection_name]
 
+'''
 # Función para crear y guardar el BM25Retriever en MongoDB
 def create_and_save_bm25(docs, collection_name):
     print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB. Erstellen und Hinzufügen von Dokumenten...")
@@ -667,9 +669,25 @@ def create_and_save_bm25(docs, collection_name):
     )
     print(f"BM25Retriever guardado en MongoDB.")
     return keyword_retriever
-
+'''
 # Función para cargar el BM25Retriever desde MongoDB
 def load_bm25(collection_name):
+    
+    print(f"Laden der bestehenden Kollektion in MongoDB:'{collection_name}' (für Keywords)")
+    docstore = MongoDBStore(
+        connection_string=MONGODB_CONNECTION_STRING,
+        db_name=MONGODB_DATABASE_NAME,
+        collection_name=collection_name,
+    )
+    keys = [key for key in docstore.yield_keys()]
+    docs_processed = docstore.mget(keys)
+
+    retriever = BM25Retriever.from_documents(docs_processed)
+    # retriever.k = top_k
+    
+    return retriever
+    
+    '''
     keyword_collection = get_mongo_collection(collection_name)
     result = keyword_collection.find_one({"name": "BM25Retriever"})
     
@@ -680,6 +698,7 @@ def load_bm25(collection_name):
     else:
         print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB.")
         return None
+    '''
 
 
 def create_multi_query_retriever(base_retriever, llm):
