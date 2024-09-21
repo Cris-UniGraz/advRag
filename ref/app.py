@@ -37,6 +37,8 @@ RESET = "\033[0m"  # Para resetear el formato
 def main(
     directory: str = DIRECTORY_PATH
 ):
+    print("\n")
+
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
     embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
 
@@ -63,12 +65,14 @@ def main(
     )
 
     chain = prompt_template | llm | StrOutputParser()
+
+    print(f"\n{BLUE}{BOLD}------------------------- Willkommen im UniChatBot -------------------------{RESET}")
   
     while True:
-        print("\n\n")
+        print("\n")
 
         # Imprimir "Benutzer-Eingabe: " en azul y negrita
-        print(f"{BLUE}{BOLD}Benutzer-Eingabe: {RESET}", end="")
+        print(f"{BLUE}{BOLD}>> Benutzer-Eingabe: {RESET}", end="")
         
         # Capturar la entrada del usuario y mostrarla en amarillo y negrita
         query = input(f"{ORANGE}{BOLD}")
@@ -93,33 +97,41 @@ def main(
                 filtered_context.append(document)
 
         # Imprimir "LLM-Antwort:" en azul negrita
-        print(f"{BLUE}{BOLD}\n\nLLM-Antwort: {RESET}", end="")
+        print(f"{BLUE}{BOLD}\n\n>> LLM-Antwort: {RESET}", end="")
 
         # Imprimir la respuesta del LLM en verde negrita
         for e in chain.stream({"context": text, "question": query}):
-            print(f"{GREEN}{BOLD}{e}{RESET}", end="")
-        print("\n\n")
+            print(e, end="")
+            # print(f"{e}{RESET}", end="")
+        print("\n")
 
         show_sources = True
 
         if show_sources:
-            print(f"{BLUE}{BOLD}--------------------------------QUELLEN-------------------------------------{RESET}")
+            print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
             unique_sources = {}
             for document in filtered_context:
                 source = os.path.basename(document.metadata['source'])
                 if document.metadata['source'].lower().endswith('.xlsx'):
                     sheet = document.metadata.get('sheet', 'Unbekannt')
                     key = (source, sheet)
-                    unique_sources[key] = f"- Dokument: {source} (Blatt: {sheet})"
+                    if sheet != 'Unbekannt':
+                        unique_sources[key] = f"- Dokument: {source} (Blatt: {sheet})"
+                    else:
+                        unique_sources[key] = f"- Dokument: {source}"
                 else:
-                    page = document.metadata.get('page', 'N/A')
+                    page = document.metadata.get('page', 'Unbekannt')
                     key = (source, page)
-                    unique_sources[key] = f"- Dokument: {source} (Seite: {page})"
+                    if page != 'Unbekannt':
+                        unique_sources[key] = f"- Dokument: {source} (Seite: {page})"
+                    else:
+                        unique_sources[key] = f"- Dokument: {source}"
             
             for source in unique_sources.values():
                 print(source)
         
-        print("\n\n\n")
+        print(f"\n{BLUE}{BOLD}----------------------------------------------------------------------------{RESET}")
+        print("\n")
 
         show_chunks = False
         if show_chunks:

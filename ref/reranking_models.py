@@ -16,6 +16,12 @@ load_dotenv(ENV_VAR_PATH)
 GERMAN_RERANKING_MODEL_NAME = os.getenv("GERMAN_RERANKING_MODEL_NAME")
 AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 
+# Códigos ANSI para colores y texto en negrita
+GREEN = "\033[32m"
+BLUE = "\033[34m"
+BOLD = "\033[1m"
+RESET = "\033[0m"  # Para resetear el formato
+
 # Function to compute MaxSim
 def maxsim(query_embedding, document_embedding):
     # Expand dimensions for broadcasting
@@ -86,7 +92,10 @@ def reranking_german(similar_chunks, query):
             "score": score.item(),
             "document": document,
         })
-    print("Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
+    
+    # print(f"Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
+    print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}{GERMAN_RERANKING_MODEL_NAME}{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
+
     # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
