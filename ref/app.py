@@ -27,8 +27,10 @@ MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir 
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
 DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")
 
-# Códigos ANSI para color azul y texto en negrita
+# Códigos ANSI para colores y texto en negrita
 BLUE = "\033[34m"
+ORANGE = "\033[38;5;208m"
+GREEN = "\033[32m"
 BOLD = "\033[1m"
 RESET = "\033[0m"  # Para resetear el formato
 
@@ -65,12 +67,12 @@ def main(
     while True:
         print("\n\n")
 
-        # query = input("Benutzer-Eingabe: ")
-        # Aplicar el estilo a la solicitud de entrada
-        styled_prompt = f"{BLUE}{BOLD}Benutzer-Eingabe: {RESET}"
-        # Solicitar la entrada al usuario con el estilo aplicado
-        query = input(styled_prompt)
-        print("\n")
+        # Imprimir "Benutzer-Eingabe: " en azul y negrita
+        print(f"{BLUE}{BOLD}Benutzer-Eingabe: {RESET}", end="")
+        
+        # Capturar la entrada del usuario y mostrarla en amarillo y negrita
+        query = input(f"{ORANGE}{BOLD}")
+        print(f"{RESET}")  # Resetear el formato después de la entrada
         
         if query == "exit":
             break
@@ -90,12 +92,12 @@ def main(
                     sources.append(source)
                 filtered_context.append(document)
 
-        # print("\n\nLLM-Antwort: ", end="")
-        # Imprimir texto azul en negrita
+        # Imprimir "LLM-Antwort:" en azul negrita
         print(f"{BLUE}{BOLD}\n\nLLM-Antwort: {RESET}", end="")
 
+        # Imprimir la respuesta del LLM en verde negrita
         for e in chain.stream({"context": text, "question": query}):
-            print(e, end="")
+            print(f"{GREEN}{BOLD}{e}{RESET}", end="")
         print("\n\n")
 
         show_sources = True
