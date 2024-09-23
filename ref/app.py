@@ -106,7 +106,7 @@ def main(
             # print(f"{e}{RESET}", end="")
         print("\n")
 
-        show_sources = False
+        show_sources = True
 
         if show_sources:
             print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
@@ -134,7 +134,7 @@ def main(
         print(f"\n{BLUE}{BOLD}----------------------------------------------------------------------------{RESET}")
         print("\n")
 
-        show_chunks = True
+        show_chunks = False
         if show_chunks:
             print("\n\n\n--------------------------------CONTEXT-------------------------------------")
             for i, chunk in enumerate(context):
