@@ -93,7 +93,6 @@ def reranking_german(similar_chunks, query):
             "document": document,
         })
     
-    # print(f"Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
     print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}{GERMAN_RERANKING_MODEL_NAME}{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
     # Sort the scores by highest to lowest
@@ -130,7 +129,6 @@ def reranking_colbert(similar_chunks, query):
             "document": document,
         })
     
-    # print(f"Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
     print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}{GERMAN_RERANKING_MODEL_NAME}{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
     # Sort the scores by highest to lowest
@@ -159,8 +157,7 @@ def reranking_cohere(similar_chunks, query):
                         model="rerank-multilingual-v3.0", 
                         return_documents=True)
 
-    # print("Es dauerte {:.2f} Sekunden, um Dokumente mit Cohere zu re-ranken.".format(time.time() - start))
-    print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}Cohere{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
+    # print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}Cohere{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
     reranked_documents = [
         Document(

@@ -98,7 +98,7 @@ def main(
                 filtered_context.append(document)
 
         # Imprimir "LLM-Antwort:" en azul negrita
-        print(f"{BLUE}{BOLD}\n\n>> LLM-Antwort: {RESET}", end="")
+        print(f"{BLUE}{BOLD}\n>> LLM-Antwort: {RESET}", end="")
 
         # Imprimir la respuesta del LLM en verde negrita
         for e in chain.stream({"context": text, "question": query}):
@@ -109,7 +109,7 @@ def main(
         show_sources = True
 
         if show_sources:
-            print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
+            print(f"{BLUE}{BOLD}>> Gefundene Quellen:{RESET}")
             unique_sources = {}
             for document in filtered_context:
                 source = os.path.basename(document.metadata['source'])
