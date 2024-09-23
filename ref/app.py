@@ -25,6 +25,7 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
 MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
+MAX_CHUNKS_LLM = int(os.getenv("MAX_CHUNKS_LLM", 3))  # Convertir a entero con valor por defecto
 DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")
 
 # Códigos ANSI para colores y texto en negrita
@@ -89,7 +90,7 @@ def main(
         sources = []
         filtered_context = []
         for document in context:
-            if len(filtered_context) < MAX_CHUNKS_CONSIDERED and document.metadata.get('reranking_score', 0) > MIN_RERANKING_SCORE:
+            if len(filtered_context) <= MAX_CHUNKS_LLM: #and document.metadata.get('reranking_score', 0) > MIN_RERANKING_SCORE:
                 text += "\n" + document.page_content
                 source = f"{os.path.basename(document.metadata['source'])} (Seite {document.metadata.get('page', 'N/A')})"
                 if source not in sources:
@@ -105,7 +106,7 @@ def main(
             # print(f"{e}{RESET}", end="")
         print("\n")
 
-        show_sources = True
+        show_sources = False
 
         if show_sources:
             print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
@@ -133,11 +134,12 @@ def main(
         print(f"\n{BLUE}{BOLD}----------------------------------------------------------------------------{RESET}")
         print("\n")
 
-        show_chunks = False
+        show_chunks = True
         if show_chunks:
             print("\n\n\n--------------------------------CONTEXT-------------------------------------")
-            for i, chunk in enumerate(filtered_context):
+            for i, chunk in enumerate(context):
                 print(f"-----------------------------------Chunk: {i}--------------------------------------")
+                print(f"Source: {os.path.basename(chunk.metadata.get('source', 'N/A'))}")
                 print(f"Context: {chunk.page_content}")
                 print(f"Reranking Score: {chunk.metadata.get('reranking_score', 'N/A')}")
             print("\n\n\n")

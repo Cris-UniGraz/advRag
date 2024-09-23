@@ -113,29 +113,35 @@ def reranking_german(similar_chunks, query):
 def reranking_colbert(similar_chunks, query):
     start = time.time()
     scores = []
-
+    # Load the tokenizer and the model
     tokenizer = AutoTokenizer.from_pretrained("colbert-ir/colbertv2.0")
     model = AutoModel.from_pretrained("colbert-ir/colbertv2.0")
-
+    # Encode the query
     query_encoding = tokenizer(query, return_tensors='pt')
     query_embedding = model(**query_encoding).last_hidden_state.mean(dim=1)
-
+    # Get score for each document
     for document in similar_chunks:
         document_encoding = tokenizer(document.page_content, return_tensors='pt', truncation=True, max_length=512)
         document_embedding = model(**document_encoding).last_hidden_state
-
+        # Calculate MaxSim score
         score = maxsim(query_embedding.unsqueeze(0), document_embedding)
         scores.append({
             "score": score.item(),
             "document": document,
         })
+    
+    # print(f"Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, GERMAN_RERANKING_MODEL_NAME))
+    print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}{GERMAN_RERANKING_MODEL_NAME}{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
-    print("Es dauerte {:.2f} Sekunden, um Dokumente mit ColBERT zu re-ranken.".format(time.time() - start))
-
+    # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
+    # Create a list of Document objects with score included in metadata
     reranked_documents = [
-        Document(page_content=r['document'].page_content, metadata=r['document'].metadata)
+        Document(
+            page_content=r['document'].page_content, 
+            metadata={**r['document'].metadata, "reranking_score": r['score']}
+        )
         for r in sorted_data
     ]
     
@@ -153,10 +159,17 @@ def reranking_cohere(similar_chunks, query):
                         model="rerank-multilingual-v3.0", 
                         return_documents=True)
 
-    print("Es dauerte {:.2f} Sekunden, um Dokumente mit Cohere zu re-ranken.".format(time.time() - start))
+    # print("Es dauerte {:.2f} Sekunden, um Dokumente mit Cohere zu re-ranken.".format(time.time() - start))
+    print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}Cohere{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
     reranked_documents = [
-        Document(page_content=r.document.text, metadata=similar_chunks[r.index].metadata)
+        Document(
+            page_content=r.document.text, 
+            metadata={
+                **similar_chunks[r.index].metadata, 
+                "reranking_score": r.relevance_score
+            }
+        )
         for r in results.results
     ]
 
