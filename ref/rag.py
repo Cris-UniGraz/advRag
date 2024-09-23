@@ -581,6 +581,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             # Cargar el Keyword Retrieval
             # keyword_retriever = load_bm25(f'{collection_name}_keywords')
 
+            '''
             # Cargar el vectorstore HyDE
             hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
                 llm,
@@ -588,6 +589,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
                 "web_search"
             )
             hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}_hyde")
+            '''
 
             # Crear el Parent Document Retriever
             parent_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}_children")
@@ -603,6 +605,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             # Crear el Keyword Retrieval
             # keyword_retriever = create_and_save_bm25(docs, f'{collection_name}_keywords')
 
+            '''
             # Crear el vectorstore HyDE
             hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
                 llm,
@@ -610,6 +613,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
                 "web_search"
             )
             hyde_vectorstore = create_milvus_collection(docs, hyde_embeddings, f"{collection_name}_hyde")
+            '''
 
             # Crear el Parent Document Retriever
             parent_vectorstore = create_milvus_collection(docs, embedding_model, f"{collection_name}_children")
@@ -624,7 +628,6 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         keyword_retriever = load_bm25(f'{collection_name}_parents')
         keyword_retriever.k = top_k
 
-        '''
         # Cargar el vectorstore HyDE
         hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
             llm,
@@ -632,7 +635,6 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             "web_search"
         )
         hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}")
-        '''
 
         # Crear el retriever de consultas múltiples
         multi_query_retriever = MultiQueryRetriever.from_llm(
@@ -648,6 +650,8 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
             # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
             # weights=[0.1, 0.1, 0.3, 0.2, 0.3]
+
+            # Pesos finales
             weights=[0.2, 0.1, 0.3, 0.1, 0.3]
         )
 
