@@ -49,6 +49,8 @@ AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
 MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
 
+OVERLAP_WORDS = os.getenv("OVERLAP_WORDS")
+
 def load_documents(folder_path):
     documents = []
     for file in os.listdir(folder_path):
@@ -103,7 +105,7 @@ def load_pdf(file_path: str) -> List[Document]:
         doc = fitz.open(file_path)
         pages = []
         documents = []
-        overlap_words = 40
+        overlap_words = OVERLAP_WORDS
         
         # Extraer y limpiar el texto de cada página
         for page_num in range(len(doc)):
@@ -175,7 +177,7 @@ def load_docx(file_path: str) -> List[Document]:
     pages = split_into_pages(text)
     
     documents = []
-    overlap_words = 40
+    overlap_words = OVERLAP_WORDS
 
     for i, page_content in enumerate(pages):
         # Preparar el contenido con overlap
