@@ -637,8 +637,14 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}")
 
         # Crear el retriever de consultas múltiples
+        '''
         multi_query_retriever = MultiQueryRetriever.from_llm(
             retriever=retriever,
+            llm=llm
+        )
+        '''
+        multi_query_retriever = create_multi_query_retriever(
+            base_retriever=retriever,
             llm=llm
         )
 
@@ -649,7 +655,7 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         ensemble_retriever = EnsembleRetriever(
             retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
             # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
-            # weights=[0.1, 0.1, 0.3, 0.2, 0.3]
+            # weights=[0.0, 0.0, 1.0, 0.0, 0.0]
 
             # Pesos finales
             weights=[0.2, 0.1, 0.3, 0.1, 0.3]
@@ -671,22 +677,6 @@ def get_mongo_collection(collection_name):
     db = client[MONGODB_DATABASE_NAME]
     return db[collection_name]
 
-'''
-# Función para crear y guardar el BM25Retriever en MongoDB
-def create_and_save_bm25(docs, collection_name):
-    print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB. Erstellen und Hinzufügen von Dokumenten...")
-    keyword_retriever = BM25Retriever.from_documents(docs)
-    serialized_retriever = Binary(pickle.dumps(keyword_retriever))
-    
-    keyword_collection = get_mongo_collection(collection_name)
-    keyword_collection.update_one(
-        {"name": "BM25Retriever"},
-        {"$set": {"keyword_retriever": serialized_retriever}},
-        upsert=True
-    )
-    print(f"BM25Retriever guardado en MongoDB.")
-    return keyword_retriever
-'''
 # Función para cargar el BM25Retriever desde MongoDB
 def load_bm25(collection_name):
     
@@ -704,18 +694,21 @@ def load_bm25(collection_name):
     
     return retriever
     
-    '''
-    keyword_collection = get_mongo_collection(collection_name)
-    result = keyword_collection.find_one({"name": "BM25Retriever"})
-    
-    if result and "keyword_retriever" in result:
-        keyword_retriever = pickle.loads(result["keyword_retriever"])
-        print(f"Laden der bestehenden Kollektion in MongoDB:'{collection_name}'")
-        return keyword_retriever
-    else:
-        print(f"Die Kollektion '{collection_name}' existiert nicht in MongoDB.")
-        return None
-    '''
+
+from typing import List
+
+from langchain_core.output_parsers import BaseOutputParser
+from langchain_core.prompts import PromptTemplate
+from pydantic import BaseModel, Field
+
+
+# Output parser will split the LLM result into a list of queries
+class LineListOutputParser(BaseOutputParser[List[str]]):
+    """Output parser for a list of lines."""
+
+    def parse(self, text: str) -> List[str]:
+        lines = text.strip().split("\n")
+        return list(filter(None, lines))  # Remove empty lines
 
 
 def create_multi_query_retriever(base_retriever, llm):
@@ -730,7 +723,31 @@ def create_multi_query_retriever(base_retriever, llm):
     - A retriever that is able to generate multiple queries. 
     """
 
-    multiquery_retriever = MultiQueryRetriever.from_llm(base_retriever, llm)
+    output_parser = LineListOutputParser()
+
+    MULTY_QUERY_PROMPT = PromptTemplate(
+        input_variables=["question"],
+        template="""Du bist ein KI-Sprachmodell-Assistent. Deine Aufgabe ist es, fünf verschiedene Versionen der gegebenen Benutzerfrage zu generieren, um relevante Dokumente aus einer Vektordatenbank zu finden. Indem du mehrere Perspektiven auf die Benutzerfrage generierst, sollst du dem Benutzer helfen, einige der Einschränkungen der entfernungsbasierten Ähnlichkeitssuche zu überwinden.
+        Dazu musst du verstehen, welches die Schlüsselwörter oder -sätze der ursprünglichen Frage sind, auch wenn sie nicht explizit in der ursprünglichen Frage enthalten sind. Um dann verschiedene Versionen der ursprünglichen Frage zu erzeugen, verwende Synonyme oder ähnliche Ausdrücke zu den jeweiligen Schlüsselwörtern oder Ausdrücken der ursprünglichen Frage, um aus der Vektordatenbank die Informationen abzurufen, die eine Antwort auf die ursprüngliche Frage ermöglichen. Gib diese Alternativfragen durch Zeilenumbrüche getrennt ein.
+        Ursprüngliche Frage: {question}""",
+    )
+
+    '''
+    original_multi_query_template="""You are an AI language model assistant. Your task is to generate five 
+    different versions of the given user question to retrieve relevant documents from a vector 
+    database. By generating multiple perspectives on the user question, your goal is to help
+    the user overcome some of the limitations of the distance-based similarity search. 
+    Provide these alternative questions separated by newlines.
+    Original question: {question}""",
+    '''
+
+    # Chain
+    llm_chain = MULTY_QUERY_PROMPT | llm | output_parser
+  
+    # multiquery_retriever = MultiQueryRetriever.from_llm(base_retriever, llm)
+    multiquery_retriever = MultiQueryRetriever(
+        retriever=base_retriever, llm_chain=llm_chain, parser_key="lines"
+    )  # "lines" is the key (attribute name) of the parsed output
 
     return multiquery_retriever
 
