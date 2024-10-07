@@ -49,7 +49,13 @@ AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
 MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
 
-OVERLAP_WORDS = os.getenv("OVERLAP_WORDS")
+CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 512))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 0))
+CHILDREN_CHUNK_SIZE = int(os.getenv("CHILDREN_CHUNK_SIZE", 256))
+CHILDREN_CHUNK_OVERLAP = int(os.getenv("CHILDREN_CHUNK_OVERLAP", 0))
+PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
+PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", 0))
+OVERLAP_WORDS = int(os.getenv("OVERLAP_WORDS", 1))
 
 def load_documents(folder_path):
     documents = []
@@ -396,8 +402,8 @@ def get_or_create_milvus_collection(docs, embedding_model, collection_name):
     else:
         print(f"Die Kollektion '{collection_name}' existiert nicht in Milvus. Erstellen und Hinzufügen von Dokumenten...")
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=512,
-            chunk_overlap=100,
+            chunk_size=CHUNK_SIZE,
+            chunk_overlap=CHUNK_OVERLAP,
             add_start_index=True,
             strip_whitespace=True,
             auto_id=True  # Agregar esta línea
@@ -443,7 +449,7 @@ def get_milvus_collection(embedding_model, collection_name):
     return vectorstore
 
 
-def create_milvus_collection(docs, embedding_model, collection_name):
+def create_milvus_collection(docs, embedding_model, chunk_size, chunk_overlap, collection_name):
     """
     Obtiene una colección existente de Milvus o crea una nueva si no existe.
     Incluye una barra de progreso para mostrar el avance de la inserción de documentos.
@@ -461,8 +467,8 @@ def create_milvus_collection(docs, embedding_model, collection_name):
 
     print(f"Die Kollektion '{collection_name}' existiert nicht in Milvus. Erstellen und Hinzufügen von Dokumenten...")
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=512,
-        chunk_overlap=100,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
         add_start_index=True,
         strip_whitespace=True,
     )
@@ -473,12 +479,29 @@ def create_milvus_collection(docs, embedding_model, collection_name):
     for doc in tqdm(all_splits, desc="Verarbeitung von Dokumenten"):
         docs_processed.append(doc)
 
+    # Supongamos que Milvus.from_documents permite la inserción en lotes
+    batch_size = 1  # Tamaño del lote
+    num_batches = len(docs_processed) // batch_size + (1 if len(docs_processed) % batch_size != 0 else 0)
+
     # Crear el vectorstore con los documentos procesados en lotes
-    vectorstore = Milvus.from_documents(
+    for i in tqdm(range(num_batches), desc="Einfügen von Dokumenten in Milvus"):
+        batch = docs_processed[i * batch_size:(i + 1) * batch_size]
+        Milvus.from_documents(
+            documents=batch, 
+            embedding=embedding_model, 
+            collection_name=collection_name,
+        )
+    
+    vectorstore = Milvus(collection_name=collection_name, embedding_function=embedding_model)
+    
+    '''
+    # Crear el vectorstore con los documentos procesados en lotes
+    Milvus.from_documents(
         documents=docs_processed,
         embedding=embedding_model,
         collection_name=collection_name,
     )
+    '''
 
     return vectorstore
 
@@ -578,48 +601,22 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             # Cargar el vectorstore base
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
 
-            # Cargar el Keyword Retrieval
-            # keyword_retriever = load_bm25(f'{collection_name}_keywords')
-
-            '''
-            # Cargar el vectorstore HyDE
-            hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
-                llm,
-                embedding_model,
-                "web_search"
-            )
-            hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}_hyde")
-            '''
-
             # Crear el Parent Document Retriever
-            parent_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}_children")
-            parent_retriever = create_parent_retriever(parent_vectorstore, collection_name, top_k)
+            children_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}")
+            parent_retriever = create_parent_retriever(children_vectorstore, collection_name, top_k)
 
         else:
             # Cargar los documentos
             docs = load_documents(folder_path=folder_path)
             
             # Crear el vectorstore base
-            base_vectorstore = create_milvus_collection(docs, embedding_model, collection_name)
-
-            # Crear el Keyword Retrieval
-            # keyword_retriever = create_and_save_bm25(docs, f'{collection_name}_keywords')
-
-            '''
-            # Crear el vectorstore HyDE
-            hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
-                llm,
-                embedding_model,
-                "web_search"
-            )
-            hyde_vectorstore = create_milvus_collection(docs, hyde_embeddings, f"{collection_name}_hyde")
-            '''
+            base_vectorstore = create_milvus_collection(docs, embedding_model, CHUNK_SIZE, CHUNK_OVERLAP, collection_name)
 
             # Crear el Parent Document Retriever
-            parent_vectorstore = create_milvus_collection(docs, embedding_model, f"{collection_name}_children")
-            parent_retriever = create_parent_retriever_from_docs(docs, parent_vectorstore, collection_name, top_k)
+            # children_vectorstore = create_milvus_collection(docs, embedding_model, CHILDREN_CHUNK_SIZE, CHILDREN_CHUNK_OVERLAP, f"{collection_name}")
+            children_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}")
+            parent_retriever = create_parent_retriever(children_vectorstore, collection_name, top_k, docs=docs)
 
-        
         # Crear o cargar el vectorstore base
         retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
         
@@ -637,12 +634,6 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
         hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}")
 
         # Crear el retriever de consultas múltiples
-        '''
-        multi_query_retriever = MultiQueryRetriever.from_llm(
-            retriever=retriever,
-            llm=llm
-        )
-        '''
         multi_query_retriever = create_multi_query_retriever(
             base_retriever=retriever,
             llm=llm
@@ -759,6 +750,7 @@ def create_parent_retriever(
     vectorstore,
     collection_name, 
     top_k=5,
+    docs=None  # Hacer que docs sea opcional
 ):
     """
     Initializes a Parent Document Retriever object to fetch the top_k most relevant documents based on cosine similarity.
@@ -785,16 +777,16 @@ def create_parent_retriever(
 
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=512,
-        chunk_overlap=0,
+        chunk_size=PARENT_CHUNK_SIZE,
+        chunk_overlap=PARENT_CHUNK_OVERLAP,
         model_name="gpt-4",
         is_separator_regex=False,
     )
 
     child_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=256,
-        chunk_overlap=0,
+        chunk_size=CHILDREN_CHUNK_SIZE,
+        chunk_overlap=CHILDREN_CHUNK_OVERLAP,
         model_name="gpt-4",
         is_separator_regex=False,
     )
@@ -813,6 +805,9 @@ def create_parent_retriever(
             collection_name=f'{collection_name}_parents'
         )
     else:
+        if docs is None:
+            raise ValueError("Documents are required when creating a new collection")
+        
         print(f"Die Kollektion '{collection_name}_parents' existiert nicht in MongoDB. Erstellen und Hinzufügen von Dokumenten...")
         store = MongoDBStore(
             connection_string=MONGODB_CONNECTION_STRING,
@@ -828,27 +823,28 @@ def create_parent_retriever(
             k=top_k,
         )
         
-        # Añadir barra de progreso para la carga de documentos en MongoDB
-        print("Verarbeitung und Laden von Dokumenten in MongoDB...")
-        for i, doc in tqdm(enumerate(docs), total=len(docs), desc="Laden von Dokumenten in MongoDB"):
-            # Asegurarse de que los metadatos existan
-            if doc.metadata is None:
-                doc.metadata = {}
-            
-            # Agregar 'start_index' y 'doc_id' a los metadatos
-            doc.metadata['start_index'] = i
-            doc.metadata['doc_id'] = str(i)
-            
-            # Verificar que el contenido del documento no esté vacío
-            if doc.page_content.strip():
-                try:
-                    # Añadir el documento al retriever
-                    temp_retriever.add_documents([doc])
-                except Exception as e:
-                    print(f"Fehler bei der Verarbeitung von Dokument {i}: {str(e)}")
-                    print(f"Inhalt des Dokuments: {doc.page_content[:100]}...")  # Imprimir los primeros 100 caracteres
-            else:
-                print(f"Das Dokument {i} ist leer und wird übersprungen.")
+        # Solo procesar documentos si estamos creando una nueva colección
+        if docs:
+            print("Verarbeitung und Laden von Dokumenten in MongoDB...")
+            for i, doc in tqdm(enumerate(docs), total=len(docs), desc="Laden von Dokumenten in MongoDB"):
+                # Asegurarse de que los metadatos existan
+                if doc.metadata is None:
+                    doc.metadata = {}
+                
+                # Agregar 'start_index' y 'doc_id' a los metadatos
+                doc.metadata['start_index'] = i
+                doc.metadata['doc_id'] = str(i)
+                
+                # Verificar que el contenido del documento no esté vacío
+                if doc.page_content.strip():
+                    try:
+                        # Añadir el documento al retriever
+                        temp_retriever.add_documents([doc])
+                    except Exception as e:
+                        print(f"Fehler bei der Verarbeitung von Dokument {i}: {str(e)}")
+                        print(f"Inhalt des Dokuments: {doc.page_content[:100]}...")  # Imprimir los primeros 100 caracteres
+                else:
+                    print(f"Das Dokument {i} ist leer und wird übersprungen.")
 
     # Crear el retriever final
     retriever = ParentDocumentRetriever(
@@ -893,16 +889,16 @@ def create_parent_retriever_from_docs(
 
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=512,
-        chunk_overlap=0,
+        chunk_size=PARENT_CHUNK_SIZE,
+        chunk_overlap=PARENT_CHUNK_OVERLAP,
         model_name="gpt-4",
         is_separator_regex=False,
     )
 
     child_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=256,
-        chunk_overlap=0,
+        chunk_size=CHILDREN_CHUNK_SIZE,
+        chunk_overlap=CHILDREN_CHUNK_OVERLAP,
         model_name="gpt-4",
         is_separator_regex=False,
     )
