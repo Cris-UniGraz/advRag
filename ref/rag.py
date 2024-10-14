@@ -39,6 +39,13 @@ from tqdm import tqdm
 from langchain_community.storage.mongodb import MongoDBStore
 from pymongo import MongoClient
 
+from pathlib import Path
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.schema import Document
+from langchain_community.document_loaders import UnstructuredFileLoader
+# from config.constants import FileType
+from rag2.loaders import load_pdf, load_docx, load_xlsx
+
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
@@ -49,13 +56,14 @@ AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
 MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
 
+DOC_SIZE = int(os.getenv("DOC_SIZE", 4096))
+DOC_OVERLAP = int(os.getenv("DOC_OVERLAP", 32))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 512))
-CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 0))
-CHILDREN_CHUNK_SIZE = int(os.getenv("CHILDREN_CHUNK_SIZE", 256))
-CHILDREN_CHUNK_OVERLAP = int(os.getenv("CHILDREN_CHUNK_OVERLAP", 0))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 16))
 PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
 PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", 0))
-OVERLAP_WORDS = int(os.getenv("OVERLAP_WORDS", 1))
+PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
+
 
 def load_documents(folder_path):
     documents = []
@@ -63,213 +71,47 @@ def load_documents(folder_path):
         if not file.startswith('~$'):
             file_path = os.path.join(folder_path, file)
             if file.lower().endswith('.pdf'):
-                documents.extend(load_pdf(file_path))
+                documents.extend(load_pdf(file_path, file, PAGE_OVERLAP))
             elif file.lower().endswith('.docx'):
-                documents.extend(load_docx(file_path))
+                documents.extend(load_docx(file_path, file))
             elif file.lower().endswith('.xlsx'):
-                documents.extend(load_xlsx(file_path))
+                documents.extend(load_xlsx(file_path, file))
     return documents
 
 
-def load_xlsx(file_path):
-    """
-    Loads text from an XLSX file, including sheet names in metadata.
-    """
-    wb = openpyxl.load_workbook(file_path)
-    documents = []
-    for sheet_num, sheet_name in enumerate(wb.sheetnames):
-        ws = wb[sheet_name]
-        text = ""
-        for row in ws.iter_rows(values_only=True):
-            text += " ".join([str(cell) for cell in row if cell is not None]) + "\n"
-        text = clean_extra_whitespace(text)
-        text = group_broken_paragraphs(text)
-        if text:  # Only add if the text is not empty
-            document = Document(
-                page_content=text,
-                metadata={"source": file_path, "sheet": sheet_name, "page": sheet_num + 1}
-            )
-            documents.append(document)
-
-    # Agregado
-    # print ("------------------------------------------------------------------------------>>>\nXlsx documents:")
-    # print (documents)
-
-    return documents
-
-
-import fitz
-import re
-from typing import List
-from langchain.schema import Document
-
-def load_pdf(file_path: str) -> List[Document]:
-    """
-    Carga documentos de un archivo PDF usando PyMuPDF, divide en páginas y crea objetos Document con overlap.
-    """
-    try:
-        doc = fitz.open(file_path)
-        pages = []
-        documents = []
-        overlap_words = OVERLAP_WORDS
-        
-        # Extraer y limpiar el texto de cada página
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            text = page.get_text("text")
-            text = clean_extra_whitespace(text)
-            text = group_broken_paragraphs(text)
-            pages.append(text)
-        
-        # Crear objetos Document con overlap
-        for i, page_content in enumerate(pages):
-            content_parts = []
-            
-            # Agregar overlap antes
-            if i > 0:
-                prev_page_words = pages[i-1].split()
-                content_parts.append(" ".join(prev_page_words[-overlap_words:]))
-            
-            # Agregar contenido de la página actual
-            content_parts.append(page_content)
-            
-            # Agregar overlap después
-            if i < len(pages) - 1:
-                next_page_words = pages[i+1].split()
-                content_parts.append(" ".join(next_page_words[:overlap_words]))
-            
-            # Crear objeto Document
-            doc = Document(
-                page_content=" ".join(content_parts),
-                metadata={"source": file_path, "page": i + 1}
-            )
-            documents.append(doc)
-        
-        # print("------------------------------------------------------------------------------>>>\nPDF documents:")
-        # print(documents)
-        
-        return documents
-    except FileNotFoundError:
-        print(f"File not found: {file_path}")
-        raise
-    except Exception as e:
-        print(f"An error occurred while loading {file_path}: {e}")
-        raise
-
-
-import docx2txt
-import re
-from typing import List
-from langchain.schema import Document
-
-def split_into_pages(text: str) -> List[str]:
-    """
-    Divide el texto en páginas basándose en saltos de página.
-    """
-    return text.split('\f')
-
-def load_docx(file_path: str) -> List[Document]:
-    """
-    Carga texto de un archivo DOCX, lo divide en páginas y crea objetos Document con overlap.
-    """
-    # Extraer texto del archivo DOCX
-    text = docx2txt.process(file_path)
+def split_documents(documents, split_size, split_overlap):
+    # Dividir documentos en tamaño DOC_SIZE
+    doc_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=split_size,
+        chunk_overlap=split_overlap,
+        length_function=len,
+        is_separator_regex=False,
+    )
     
-    # Limpiar y agrupar párrafos
-    text = clean_extra_whitespace(text)
-    text = group_broken_paragraphs(text)
+    split_docs = []
+    for doc in documents:
+        splits = doc_splitter.split_text(doc.page_content)
+        for i, split in enumerate(splits):
+            metadata = doc.metadata.copy()
+            metadata['doc_chunk'] = i
+            split_docs.append(Document(page_content=split, metadata=metadata))
     
-    # Dividir en páginas
-    pages = split_into_pages(text)
+    return split_docs
+
+
+def process_documents(folder_path):
+    # Cargar documentos
+    documents = load_documents(folder_path)
     
-    documents = []
-    overlap_words = OVERLAP_WORDS
-
-    for i, page_content in enumerate(pages):
-        # Preparar el contenido con overlap
-        content_parts = []
-        
-        # Agregar overlap antes
-        if i > 0:
-            prev_page_words = pages[i-1].split()
-            content_parts.append(" ".join(prev_page_words[-overlap_words:]))
-        
-        # Agregar contenido de la página actual
-        content_parts.append(page_content)
-        
-        # Agregar overlap después
-        if i < len(pages) - 1:
-            next_page_words = pages[i+1].split()
-            content_parts.append(" ".join(next_page_words[:overlap_words]))
-        
-        # Crear objeto Document
-        doc = Document(
-            page_content=" ".join(content_parts),
-            metadata={"source": file_path, "page": i + 1}
-        )
-        documents.append(doc)
+    # Dividir en documentos de tamaño DOC_SIZE
+    split_docs = split_documents(documents, DOC_SIZE, DOC_OVERLAP)
     
-    # print("------------------------------------------------------------------------------>>>\nDocx documents:")
-    # print(documents)
+    # Dividir en chunks de tamaño CHUNK_SIZE
+    split_chunks = split_documents(split_docs, CHUNK_SIZE, CHUNK_OVERLAP)
     
-    return documents
+    return split_chunks
 
-
-def split_documents(
-    chunk_size: int,
-    knowledge_base,
-    tokenizer_name= EMBEDDING_MODEL_NAME,
-):
-    """
-    Splits documents into chunks of maximum size `chunk_size` tokens, using a specified tokenizer.
-    
-    Parameters:
-    - chunk_size: The maximum number of tokens for each chunk.
-    - knowledge_base: A list of LangchainDocument objects to be split.
-    - tokenizer_name: (Optional) The name of the tokenizer to use. Defaults to `EMBEDDING_MODEL_NAME`.
-    
-    Returns:
-    - A list of LangchainDocument objects, each representing a chunk. Duplicates are removed based on `page_content`.
-    
-    Raises:
-    - ImportError: If necessary modules for tokenization are not available.
-    """
-
-    if tokenizer_name=="openai":
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            separators=["\n\n\n", "\n\n", "\n", ".", ""],
-            chunk_size=chunk_size,
-            chunk_overlap=int(chunk_size / 10),
-            model_name="gpt-4",
-            is_separator_regex=False,
-            add_start_index=True,
-            strip_whitespace=True,
-        )
-    else:
-        text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(
-            AutoTokenizer.from_pretrained(tokenizer_name),
-            chunk_size=chunk_size,
-            chunk_overlap=int(chunk_size / 10),
-            add_start_index=True,
-            strip_whitespace=True,
-        )
-
-    docs_processed = (text_splitter.split_documents([doc]) for doc in knowledge_base)
-
-    print(f">>> Numero de chunks: {len(docs_processed)}")
-
-    # Flatten list and remove duplicates more efficiently
-    unique_texts = set()
-    docs_processed_unique = []
-    for doc_chunk in docs_processed:
-        for doc in doc_chunk:
-            if doc.page_content not in unique_texts:
-                unique_texts.add(doc.page_content)
-                docs_processed_unique.append(doc)
-
-    return docs_processed_unique
-
-
+   
 def load_embedding_model(
     model_name = EMBEDDING_MODEL_NAME, 
 ):
@@ -330,99 +172,6 @@ def retrieve_context(query, retriever):
 
     return retrieved_docs
 
-
-def get_fusion_retriever(docs, embedding_model, collection_name="test", top_k=3):
-    """
-    Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
-
-    Parameters:
-    - docs: A list of documents to be indexed and retrieved.
-    - embedding_model: The embedding model to use for generating document embeddings.
-    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
-
-    Returns:
-    - A retriever object configured to retrieve the top_k relevant documents.
-
-    Raises:
-    - ValueError: If any input parameter is invalid.
-    """
-
-    # Hybrid search
-    # Example of parameter validation (optional)
-    if top_k < 1:
-        raise ValueError("top_k must be at least 1")
-
-    try:
-        vector_store = Milvus.from_documents(
-            documents=docs, 
-            embedding=embedding_model,
-            collection_name=collection_name,
-        )
-
-        retriever = vector_store.as_retriever(search_kwargs={"k":top_k})
-        # retriever.k = top_k
-
-        # add keyword search 
-        keyword_retriever = BM25Retriever.from_documents(docs)
-        keyword_retriever.k =  3
-
-        ensemble_retriever = EnsembleRetriever(retrievers=[retriever,
-                                                    keyword_retriever],
-                                        weights=[0.5, 0.5])
-
-        return ensemble_retriever
-    except Exception as e:
-        print(f"An error occurred while initializing the retriever: {e}")
-        raise
-
-
-def get_or_create_milvus_collection(docs, embedding_model, collection_name):
-    """
-    Obtiene una colección existente de Milvus o crea una nueva si no existe.
-    Incluye una barra de progreso para mostrar el avance de la inserción de documentos.
-
-    Parameters:
-    - docs: Documentos a insertar si se crea una nueva colección.
-    - embedding_model: Modelo de embedding a utilizar.
-    - collection_name: Nombre de la colección.
-
-    Returns:
-    - Una instancia de Milvus (vectorstore).
-    """
-    # Establecer conexión con Milvus
-    connections.connect()
-
-    # Verificar si la colección ya existe
-    if utility.has_collection(collection_name):
-        print(f"Laden der bestehenden Kollektion in Milvus:'{collection_name}'")
-        vectorstore = Milvus(
-            collection_name=collection_name,
-            embedding_function=embedding_model,
-        )
-    else:
-        print(f"Die Kollektion '{collection_name}' existiert nicht in Milvus. Erstellen und Hinzufügen von Dokumenten...")
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=CHUNK_SIZE,
-            chunk_overlap=CHUNK_OVERLAP,
-            add_start_index=True,
-            strip_whitespace=True,
-            auto_id=True  # Agregar esta línea
-        )
-        all_splits = text_splitter.split_documents(docs)
-        docs_processed = []
-
-        # Iterar sobre los documentos y mostrar el progreso
-        for doc in tqdm(all_splits, desc="Verarbeitung von Dokumenten"):
-            docs_processed.append(doc)
-
-        # Crear el vectorstore con los documentos procesados en lotes
-        vectorstore = Milvus.from_documents(
-            documents=docs_processed,
-            embedding=embedding_model,
-            collection_name=collection_name,
-        )
-
-    return vectorstore
 
 def get_milvus_collection(embedding_model, collection_name):
     """
@@ -506,71 +255,7 @@ def create_milvus_collection(docs, embedding_model, chunk_size, chunk_overlap, c
     return vectorstore
 
 
-def get_ensemble_retriever(docs, embedding_model, llm, collection_name="test", top_k=3):
-    """
-    Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
-    Now includes a HyDE retriever in the ensemble, using Milvus as the vector store.
-    Checks for existing collections before creating new ones.
-
-    Parameters:
-    - docs: A list of documents to be indexed and retrieved.
-    - embedding_model: The embedding model to use for generating document embeddings.
-    - llm: Language model to use for HyDE.
-    - collection_name: The name of the collection.
-    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
-
-    Returns:
-    - An ensemble retriever object configured to retrieve the top_k relevant documents.
-
-    Raises:
-    - ValueError: If any input parameter is invalid.
-    """
-
-    if top_k < 1:
-        raise ValueError("top_k must be at least 1")
-
-    try:
-        # Crear o cargar el vectorstore base
-        base_vectorstore = get_or_create_milvus_collection(docs, embedding_model, collection_name)
-        retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
-        
-        # Crear el retriever de palabras clave
-        keyword_retriever = BM25Retriever.from_documents(docs)
-        keyword_retriever.k = top_k
-
-        # Crear el retriever de consultas múltiples
-        multi_query_retriever = MultiQueryRetriever.from_llm(
-            retriever=retriever,
-            llm=llm
-        )
-
-        # Crear o cargar el vectorstore HyDE
-        hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
-            llm,
-            embedding_model,
-            "web_search"
-        )
-        hyde_collection_name = f"{collection_name}_hyde"
-        hyde_vectorstore = get_or_create_milvus_collection(docs, hyde_embeddings, hyde_collection_name)
-        hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
-
-        # Crear el Parent Document Retriever
-        parent_retriever = create_parent_retriever(docs, embedding_model, collection_name, top_k)
-
-        # Crear el ensemble retriever con los cinco retrievers
-        ensemble_retriever = EnsembleRetriever(
-            retrievers=[retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
-            # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
-            weights=[0.1, 0.1, 0.3, 0.2, 0.3]
-        )
-
-        return ensemble_retriever
-    except Exception as e:
-        print(f"An error occurred while initializing the retriever: {e}")
-        raise
-
-
-def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_name="test", top_k=3):
+def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="test", top_k=3, language="german"):
     """
     Initializes a retriever object to fetch the top_k most relevant documents based on cosine similarity.
     Now includes a HyDE retriever in the ensemble, using Milvus as the vector store.
@@ -602,45 +287,52 @@ def get_ensemble_retriever_check(folder_path, embedding_model, llm, collection_n
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
 
             # Crear el Parent Document Retriever
-            children_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}")
+            children_vectorstore = get_milvus_collection(embedding_model, collection_name)
             parent_retriever = create_parent_retriever(children_vectorstore, collection_name, top_k)
 
         else:
             # Cargar los documentos
-            docs = load_documents(folder_path=folder_path)
-            
+            # docs = load_documents(folder_path=folder_path)
+            docs = split_documents(load_documents(folder_path=folder_path), DOC_SIZE, DOC_OVERLAP)
+                    
             # Crear el vectorstore base
             base_vectorstore = create_milvus_collection(docs, embedding_model, CHUNK_SIZE, CHUNK_OVERLAP, collection_name)
 
             # Crear el Parent Document Retriever
-            # children_vectorstore = create_milvus_collection(docs, embedding_model, CHILDREN_CHUNK_SIZE, CHILDREN_CHUNK_OVERLAP, f"{collection_name}")
-            children_vectorstore = get_milvus_collection(embedding_model, f"{collection_name}")
+            children_vectorstore = get_milvus_collection(embedding_model, collection_name)
             parent_retriever = create_parent_retriever(children_vectorstore, collection_name, top_k, docs=docs)
 
         # Crear o cargar el vectorstore base
         retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
-        
+          
         # Crear el retriever de palabras clave
         # keyword_retriever = BM25Retriever.from_documents(docs)
         keyword_retriever = load_bm25(f'{collection_name}_parents')
-        keyword_retriever.k = top_k
+        if keyword_retriever is None:
+            keyword_retriever = retriever
+        else:
+            keyword_retriever.k = top_k
 
-        # Cargar el vectorstore HyDE
+        # Crear el retriever de consultas múltiples
+        '''
+        multi_query_retriever = create_multi_query_retriever(
+            base_retriever=retriever,
+            llm=llm
+        )
+        '''
+        multi_query_retriever = get_multi_query_retriever(retriever, llm, language)
+
+        # Crear el HyDE retriever
+        '''
         hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
             llm,
             embedding_model,
             "web_search"
         )
-        hyde_vectorstore = get_milvus_collection(hyde_embeddings, f"{collection_name}")
-
-        # Crear el retriever de consultas múltiples
-        multi_query_retriever = create_multi_query_retriever(
-            base_retriever=retriever,
-            llm=llm
-        )
-
-        # Crear o cargar el vectorstore HyDE
+        hyde_vectorstore = base_vectorstore
         hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
+        '''
+        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
 
         # Crear el ensemble retriever con los cinco retrievers
         ensemble_retriever = EnsembleRetriever(
@@ -670,20 +362,38 @@ def get_mongo_collection(collection_name):
 
 # Función para cargar el BM25Retriever desde MongoDB
 def load_bm25(collection_name):
-    
     print(f"Laden der bestehenden Kollektion in MongoDB:'{collection_name}' (für Keywords)")
     docstore = MongoDBStore(
         connection_string=MONGODB_CONNECTION_STRING,
         db_name=MONGODB_DATABASE_NAME,
         collection_name=collection_name,
     )
-    keys = [key for key in docstore.yield_keys()]
-    docs_processed = docstore.mget(keys)
-
-    retriever = BM25Retriever.from_documents(docs_processed)
-    # retriever.k = top_k
+    keys = list(docstore.yield_keys())
     
-    return retriever
+    if not keys:
+        print(f"No se encontraron documentos en la colección '{collection_name}'")
+        return None
+    
+    docs_processed = docstore.mget(keys)
+    
+    if not docs_processed:
+        print(f"No se pudieron recuperar documentos de la colección '{collection_name}'")
+        return None
+    
+    # Filtrar documentos válidos
+    valid_docs = [doc for doc in docs_processed if doc and hasattr(doc, 'page_content') and hasattr(doc, 'metadata')]
+    
+    if not valid_docs:
+        print("No se encontraron documentos válidos para crear el BM25Retriever")
+        return None
+    
+    try:
+        retriever = BM25Retriever.from_documents(valid_docs)
+        print(f"BM25Retriever creado con éxito con {len(valid_docs)} documentos")
+        return retriever
+    except Exception as e:
+        print(f"Error al crear BM25Retriever: {str(e)}")
+        return None
     
 
 from typing import List
@@ -700,47 +410,6 @@ class LineListOutputParser(BaseOutputParser[List[str]]):
     def parse(self, text: str) -> List[str]:
         lines = text.strip().split("\n")
         return list(filter(None, lines))  # Remove empty lines
-
-
-def create_multi_query_retriever(base_retriever, llm):
-    """
-    Create a multi-query retriever based on the base retriever and LLM. 
-
-    Parameters: 
-    - base_retriever: base retriever 
-    - llm: LLM to generate variations of queries.
-
-    Returns: 
-    - A retriever that is able to generate multiple queries. 
-    """
-
-    output_parser = LineListOutputParser()
-
-    MULTY_QUERY_PROMPT = PromptTemplate(
-        input_variables=["question"],
-        template="""Du bist ein KI-Sprachmodell-Assistent. Deine Aufgabe ist es, fünf verschiedene Versionen der gegebenen Benutzerfrage zu generieren, um relevante Dokumente aus einer Vektordatenbank zu finden. Indem du mehrere Perspektiven auf die Benutzerfrage generierst, sollst du dem Benutzer helfen, einige der Einschränkungen der entfernungsbasierten Ähnlichkeitssuche zu überwinden.
-        Dazu musst du verstehen, welches die Schlüsselwörter oder -sätze der ursprünglichen Frage sind, auch wenn sie nicht explizit in der ursprünglichen Frage enthalten sind. Um dann verschiedene Versionen der ursprünglichen Frage zu erzeugen, verwende Synonyme oder ähnliche Ausdrücke zu den jeweiligen Schlüsselwörtern oder Ausdrücken der ursprünglichen Frage, um aus der Vektordatenbank die Informationen abzurufen, die eine Antwort auf die ursprüngliche Frage ermöglichen. Gib diese Alternativfragen durch Zeilenumbrüche getrennt ein.
-        Ursprüngliche Frage: {question}""",
-    )
-
-    '''
-    original_multi_query_template="""You are an AI language model assistant. Your task is to generate five 
-    different versions of the given user question to retrieve relevant documents from a vector 
-    database. By generating multiple perspectives on the user question, your goal is to help
-    the user overcome some of the limitations of the distance-based similarity search. 
-    Provide these alternative questions separated by newlines.
-    Original question: {question}""",
-    '''
-
-    # Chain
-    llm_chain = MULTY_QUERY_PROMPT | llm | output_parser
-  
-    # multiquery_retriever = MultiQueryRetriever.from_llm(base_retriever, llm)
-    multiquery_retriever = MultiQueryRetriever(
-        retriever=base_retriever, llm_chain=llm_chain, parser_key="lines"
-    )  # "lines" is the key (attribute name) of the parsed output
-
-    return multiquery_retriever
 
 
 from langchain_milvus import Milvus
@@ -785,8 +454,8 @@ def create_parent_retriever(
 
     child_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=CHILDREN_CHUNK_SIZE,
-        chunk_overlap=CHILDREN_CHUNK_OVERLAP,
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
         model_name="gpt-4",
         is_separator_regex=False,
     )
@@ -858,112 +527,70 @@ def create_parent_retriever(
     return retriever
 
 
-def create_parent_retriever_from_docs(
-    docs,
-    vectorstore,
-    collection_name, 
-    top_k=5,
-):
+def get_multi_query_retriever(base_retriever, llm, language):
     """
-    Initializes a Parent Document Retriever object to fetch the top_k most relevant documents based on cosine similarity.
-    Uses MongoDB for persistent storage of parent documents.
+    Create a multi-query retriever based on the base retriever and LLM.
 
     Parameters:
-    - docs: A list of documents to be indexed and retrieved.
-    - embedding_model: The embedding model to use for generating document embeddings.
-    - collection_name: The name of the collection
-    - top_k: The number of top relevant documents to retrieve. Defaults to 5.
+    - base_retriever: base retriever
+    - llm: LLM to generate variations of queries.
 
     Returns:
-    - A Parent Document Retriever object configured to retrieve the top_k relevant documents.
-
-    Raises:
-    - ValueError: If any input parameter is invalid.
+    - A retriever that is able to generate multiple queries.
     """
-
-    # Establecer conexión con Milvus
-    # connections.connect()
-
-    # Verificar si la colección ya existe en Milvus
-    # vectorstore = get_or_create_milvus_collection(docs, embedding_model, f"{collection_name}_children")
-
-    parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-        separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=PARENT_CHUNK_SIZE,
-        chunk_overlap=PARENT_CHUNK_OVERLAP,
-        model_name="gpt-4",
-        is_separator_regex=False,
+    output_parser = LineListOutputParser()
+    QUERY_PROMPT = PromptTemplate(
+        input_variables=["question"],
+        template=f"""You are an AI language model assistant. Your task is to generate five 
+    different versions of the given user question in {language} to retrieve relevant documents from a vector 
+    database. By generating multiple perspectives on the user question, your goal is to help
+    the user overcome some of the limitations of the distance-based similarity search. 
+    Provide these alternative questions separated by newlines.
+    Original question: {{question}}""",
     )
+    llm_chain = QUERY_PROMPT | llm | output_parser
 
-    child_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-        separators=["\n\n\n", "\n\n", "\n", ".", ""],
-        chunk_size=CHILDREN_CHUNK_SIZE,
-        chunk_overlap=CHILDREN_CHUNK_OVERLAP,
-        model_name="gpt-4",
-        is_separator_regex=False,
-    )
-
-    # Crear conexión a MongoDB
-    # client = MongoClient(MONGODB_CONNECTION_STRING)
-    # db = client[MONGODB_DATABASE_NAME]
-    mongo_collection = get_mongo_collection(f'{collection_name}_parents')
-
-    # Verificar si la colección existe en MongoDB
-    if mongo_collection.count_documents({}) > 0:
-        print(f"Laden der bestehenden Kollektion in MongoDB:'{collection_name}_parents'")
-        store = MongoDBStore(
-            connection_string=MONGODB_CONNECTION_STRING,
-            db_name=MONGODB_DATABASE_NAME,
-            collection_name=f'{collection_name}_parents'
-        )
-    else:
-        print(f"Die Kollektion '{collection_name}_parents' existiert nicht in MongoDB. Erstellen und Hinzufügen von Dokumenten...")
-        store = MongoDBStore(
-            connection_string=MONGODB_CONNECTION_STRING,
-            db_name=MONGODB_DATABASE_NAME,
-            collection_name=f'{collection_name}_parents'
-        )
-        # Crear el retriever y agregar documentos
-        temp_retriever = ParentDocumentRetriever(
-            vectorstore=vectorstore,
-            docstore=store,
-            child_splitter=child_splitter,
-            parent_splitter=parent_splitter,
-            k=top_k,
-        )
-        
-        # Añadir barra de progreso para la carga de documentos en MongoDB
-        print("Procesando y cargando documentos en MongoDB...")
-        for i, doc in tqdm(enumerate(docs), total=len(docs), desc="Cargando documentos en MongoDB"):
-            # Asegurarse de que los metadatos existan
-            if doc.metadata is None:
-                doc.metadata = {}
-            
-            # Agregar 'start_index' y 'doc_id' a los metadatos
-            doc.metadata['start_index'] = i
-            doc.metadata['doc_id'] = str(i)
-            
-            # Verificar que el contenido del documento no esté vacío
-            if doc.page_content.strip():
-                try:
-                    # Añadir el documento al retriever
-                    temp_retriever.add_documents([doc])
-                except Exception as e:
-                    print(f"Error al procesar el documento {i}: {str(e)}")
-                    print(f"Contenido del documento: {doc.page_content[:100]}...")  # Imprimir los primeros 100 caracteres
-            else:
-                print(f"El documento {i} está vacío y será omitido.")
-
-    # Crear el retriever final
-    retriever = ParentDocumentRetriever(
-        vectorstore=vectorstore,
-        docstore=store,
-        child_splitter=child_splitter,
-        parent_splitter=parent_splitter,
-        k=top_k,
-    )
+    retriever = MultiQueryRetriever(retriever=base_retriever, llm_chain=llm_chain)
 
     return retriever
+
+
+def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3):
+    """
+    Initializes a HyDE retriever that generates multiple query variations based on the provided LLM.
+
+    Parameters:
+    - embedding_model: The embedding model used to generate document embeddings.
+    - llm: LLM to generate variations of queries.
+    - collection_name: The name of the collection in the vector store.
+    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
+
+    Returns:
+    - An instance of a HyDE (Hypothetical Document Embedder)
+    """
+    QUERY_PROMPT = PromptTemplate(
+        input_variables=["question"],
+        template=f"""Please write a passage in {language} to answer the question.
+    Question: {{question}}""",
+    )
+
+    llm_chain = QUERY_PROMPT | llm | StrOutputParser()
+
+    hyde_embeddings = HypotheticalDocumentEmbedder(
+        llm_chain=llm_chain,
+        base_embeddings=embedding_model,
+    )
+    hyde_vectorstore = get_milvus_collection(hyde_embeddings, collection_name)
+    '''
+    vectorstore = Milvus(
+        hyde_embeddings,
+        connection_args={"uri": VECTOR_DATABASE_URI},
+        collection_name=collection_name,
+    )
+    '''
+    hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
+
+    return hyde_retriever
 
 
 def rerank_docs(query, retrieved_docs, reranker_model):

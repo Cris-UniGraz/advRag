@@ -6,14 +6,10 @@ import os
 from dotenv import load_dotenv
 
 from rag import (
-    create_parent_retriever,
     load_embedding_model,
-    load_documents,
     retrieve_context_reranked,
-    create_multi_query_retriever,
     azure_openai_call,
-    get_ensemble_retriever,
-    get_ensemble_retriever_check
+    get_ensemble_retriever
 )
 
 # Al principio del archivo, después de las importaciones
@@ -45,10 +41,8 @@ def main(
 
     #docs = load_documents(folder_path=directory)
 
-    #Ensemble Retrieval
-    # retriever = get_ensemble_retriever(docs, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
-
-    retriever = get_ensemble_retriever_check(directory, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
+    # Ensemble Retrieval
+    retriever = get_ensemble_retriever(directory, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
