@@ -56,8 +56,6 @@ AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
 MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
 MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
 
-DOC_SIZE = int(os.getenv("DOC_SIZE", 4096))
-DOC_OVERLAP = int(os.getenv("DOC_OVERLAP", 32))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 512))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 16))
 PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
@@ -104,7 +102,7 @@ def process_documents(folder_path):
     documents = load_documents(folder_path)
     
     # Dividir en documentos de tamaño DOC_SIZE
-    split_docs = split_documents(documents, DOC_SIZE, DOC_OVERLAP)
+    split_docs = split_documents(documents, PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP)
     
     # Dividir en chunks de tamaño CHUNK_SIZE
     split_chunks = split_documents(split_docs, CHUNK_SIZE, CHUNK_OVERLAP)
@@ -293,7 +291,7 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
         else:
             # Cargar los documentos
             # docs = load_documents(folder_path=folder_path)
-            docs = split_documents(load_documents(folder_path=folder_path), DOC_SIZE, DOC_OVERLAP)
+            docs = split_documents(load_documents(folder_path=folder_path), PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP)
                     
             # Crear el vectorstore base
             base_vectorstore = create_milvus_collection(docs, embedding_model, CHUNK_SIZE, CHUNK_OVERLAP, collection_name)
@@ -389,7 +387,7 @@ def load_bm25(collection_name):
     
     try:
         retriever = BM25Retriever.from_documents(valid_docs)
-        print(f"BM25Retriever creado con éxito con {len(valid_docs)} documentos")
+        # print(f"BM25Retriever creado con éxito con {len(valid_docs)} documentos")
         return retriever
     except Exception as e:
         print(f"Error al crear BM25Retriever: {str(e)}")
@@ -679,6 +677,7 @@ def load_llm_client():
     client = AzureOpenAI(
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
         api_version="2023-05-15",
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+        azure_deployment=os.getenv("AZURE_OPENAI_API_DEPLOYMENT_ID")
     )
     return client

@@ -15,7 +15,10 @@ streamlit
 cohere
 langchain-huggingface
 langchain-milvus
-python-docx openpyxl
+langchain-mongodb
+python-docx
+openpyxl
 transformers
 torch
 llama-parse
+pydantic
