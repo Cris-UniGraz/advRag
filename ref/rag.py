@@ -40,7 +40,7 @@ ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
 
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
-AZURE_OPENAI_MODEL = os.getenv("AZURE_OPENAI_MODEL")
+AZURE_OPENAI_LLM_MODEL = os.getenv("AZURE_OPENAI_LLM_MODEL")
 
 MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
 MONGODB_DATABASE_NAME = os.getenv("MONGODB_DATABASE_NAME")
@@ -747,7 +747,7 @@ def azure_openai_call(prompt):
         prompt_content = str(prompt)
     
     response = load_llm_client().chat.completions.create(
-        model=AZURE_OPENAI_MODEL,
+        model=AZURE_OPENAI_LLM_MODEL,
         messages=[
             {"role": "system", "content": "Du bist ein hilfreicher Assistent."},
             {"role": "user", "content": prompt_content}
@@ -762,8 +762,8 @@ def load_llm_client():
     # Configurar el cliente de Azure OpenAI
     client = AzureOpenAI(
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
-        api_version="2023-05-15",
+        api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
         azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        azure_deployment=os.getenv("AZURE_OPENAI_API_DEPLOYMENT_ID")
+        azure_deployment=os.getenv("AAZURE_OPENAI_API_LLM_DEPLOYMENT_ID")
     )
     return client
