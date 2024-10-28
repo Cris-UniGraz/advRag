@@ -127,8 +127,8 @@ def load_embedding_model(
                 api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
                 model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
             )
-            aoaimodel=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
-            print(f"Se ha cargado el embedding model de Azure OpenAI: {aoaimodel}")
+            # aoaimodel=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
+            # print(f"Se ha cargado el embedding model de Azure OpenAI: {aoaimodel}")
         else:
             model_name = EMBEDDING_MODEL_NAME 
             if torch.backends.mps.is_available():
