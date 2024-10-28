@@ -10,7 +10,6 @@ from rag import (
     retrieve_context_reranked,
     azure_openai_call,
     get_ensemble_retriever,
-    get_multilingual_retriever
 )
 
 # Al principio del archivo, después de las importaciones
@@ -43,13 +42,9 @@ def main(
     german_embedding_model = load_embedding_model(model_name=GERMAN_EMBEDDING_MODEL_NAME)
     english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
 
-    #docs = load_documents(folder_path=directory)
-
     # Ensemble Retrieval
     german_retriever = get_ensemble_retriever(f"{directory}/de", german_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_de", top_k=MAX_CHUNKS_CONSIDERED, language="german")
     english_retriever = get_ensemble_retriever(f"{directory}/en", english_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_en", top_k=MAX_CHUNKS_CONSIDERED, language="english")
-
-    retriever = get_multilingual_retriever(german_retriever, english_retriever)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
@@ -88,8 +83,10 @@ def main(
 
         context = retrieve_context_reranked(
             query, 
-            retriever=retriever, 
-            reranker_model=RERANKING_TYPE,
+            retriever1=german_retriever,
+            retriever2= english_retriever,
+            reranker_type_1=RERANKING_TYPE,
+            reranker_type_2=RERANKING_TYPE,
             chat_history=chat_history, # Añadir el historial
             language = "german"
         )

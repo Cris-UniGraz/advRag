@@ -146,7 +146,7 @@ def reranking_colbert(similar_chunks, query):
     return reranked_documents
 
 
-def reranking_cohere(similar_chunks, query):
+def reranking_cohere(similar_chunks, query, model):
     co = cohere.Client(os.environ["COHERE_API_KEY"])
 
     documents = [doc.page_content for doc in similar_chunks]
@@ -154,7 +154,7 @@ def reranking_cohere(similar_chunks, query):
 
     results = co.rerank(query=query, 
                         documents=documents, 
-                        model="rerank-multilingual-v3.0", 
+                        model=model, 
                         return_documents=True)
 
     # print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}Cohere{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")

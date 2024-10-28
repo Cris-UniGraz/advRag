@@ -396,10 +396,12 @@ def retrieve_context(query, retriever, chat_history=[], language="german"):
     return retrieved_docs
 
 
+'''
 def get_multilingual_retriever(retriever1, retriever2):
     ensemble_retriever = EnsembleRetriever(retrievers=[retriever1, retriever2],
                                         weights=[0.5, 0.5])
     return ensemble_retriever
+'''
 
 
 # import pickle
@@ -675,12 +677,12 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
     return hyde_retriever
 
 
-def rerank_docs(query, retrieved_docs, reranker_model):
+def rerank_docs(query, retrieved_docs, reranker_type, reranking_model):
     """
     Rerank the provided context chunks
 
     Parameters:
-    - reranker_model: the model selection.
+    - reranker_type: the model selection.
     - query: user query - string
     - retrieved_docs: chunks that needs to be ranked. 
 
@@ -690,13 +692,13 @@ def rerank_docs(query, retrieved_docs, reranker_model):
 
     """
 
-    if reranker_model=="gpt":
+    if reranker_type=="gpt":
         ranked_docs = reranking_gpt(retrieved_docs, query)
-    elif reranker_model=="german":
+    elif reranker_type=="german":
         ranked_docs = reranking_german(retrieved_docs, query)
-    elif reranker_model=="cohere":
-        ranked_docs = reranking_cohere(retrieved_docs, query)
-    elif reranker_model=="colbert":
+    elif reranker_type=="cohere":
+        ranked_docs = reranking_cohere(retrieved_docs, query, reranking_model)
+    elif reranker_type=="colbert":
         ranked_docs = reranking_colbert(retrieved_docs, query)
     else: # just return the original order
         ranked_docs = [(query, r.page_content) for r in retrieved_docs]
@@ -704,7 +706,7 @@ def rerank_docs(query, retrieved_docs, reranker_model):
     return ranked_docs
 
 
-def retrieve_context_reranked(query, retriever, reranker_model, chat_history=[], language="german"):
+def retrieve_context_reranked(query, retriever1, retriever2, reranker_type_1, reranker_type_2, chat_history=[], language="german"):
     """
     Retrieve the context and rerank them based on the selected re-ranking model,
     considering chat history.
@@ -718,7 +720,9 @@ def retrieve_context_reranked(query, retriever, reranker_model, chat_history=[],
     Returns:
     - Sorted list of chunks based on their relevance to the query
     """
-    retrieved_docs = retrieve_context(query, retriever, chat_history, language)
+    retrieved_docs_1 = retrieve_context(query, retriever1, chat_history, language)
+    retrieved_docs_2 = retrieve_context(query, retriever2, chat_history, language)
+    retrieved_docs = retrieved_docs_1 + retrieved_docs_2
 
     #print(type(retrieved_docs), type(retrieved_docs[0]) if retrieved_docs else None)
 
@@ -726,15 +730,26 @@ def retrieve_context_reranked(query, retriever, reranker_model, chat_history=[],
         print(
             f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. Versuche, deine Frage zu ändern!"
         )
-    reranked_docs = rerank_docs(
-        query=query, retrieved_docs=retrieved_docs, reranker_model=reranker_model
+    reranked_docs_1 = rerank_docs(
+        query=query, retrieved_docs=retrieved_docs_1, reranker_type=reranker_type_1, reranking_model=os.getenv("GERMAN_COHERE_RERANKING_MODEL")
+    )
+    reranked_docs_2 = rerank_docs(
+        query=query, retrieved_docs=retrieved_docs_2, reranker_type=reranker_type_2, reranking_model=os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
+    )
+    # Combine both sets of reranked documents
+    all_reranked_docs = reranked_docs_1 + reranked_docs_2
+
+    # Sort all documents by their reranking_score
+    sorted_docs = sorted(
+        all_reranked_docs,
+        key=lambda x: x.metadata.get('reranking_score', 0),
+        reverse=True  # Higher scores first
     )
 
-    if len(reranked_docs) == 0:
-        print(
-            f"Die re-rankteten Dokumente sind 0."
-        )
-    return reranked_docs
+    if len(sorted_docs) == 0:
+        print("Die re-rankteten Dokumente sind 0.")
+        
+    return sorted_docs
 
 
 def azure_openai_call(prompt):
