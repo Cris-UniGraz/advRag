@@ -151,24 +151,6 @@ def load_embedding_model(
         raise
 
 
-def retrieve_context(query, retriever):
-    """
-    Retrieves and reranks documents relevant to a given query.
-
-    Parameters:
-    - query: The search query as a string.
-    - retriever: An instance of a Retriever class used to fetch initial documents.
-
-    Returns:
-    - A list of reranked documents deemed relevant to the query.
-
-    """
-
-    retrieved_docs = retriever.invoke(input=query)
-
-    return retrieved_docs
-
-
 def get_milvus_collection(embedding_model, collection_name):
     """
     Obtiene una colección existente de Milvus.
@@ -296,11 +278,11 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
         # Crear o cargar el vectorstore base with history awareness
         base_retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
         contextualize_q_system_prompt = (
-            f"Given a chat history and the latest user question in {language} "
+            f"Given a chat history and the latest user question "
             "which might reference context in the chat history, "
             "formulate a standalone question which can be understood "
             "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is."
+            "just reformulate it if needed and otherwise return it as is. Give the question in {language}."
         )
         contextualize_q_prompt = ChatPromptTemplate.from_messages([
             ("system", contextualize_q_system_prompt),
@@ -384,7 +366,7 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
         print(f"An error occurred while initializing the retriever: {e}")
         raise
 
-def retrieve_context(query, retriever, chat_history=[]):
+def retrieve_context(query, retriever, chat_history=[], language="german"):
     """
     Retrieves documents relevant to a given query, considering chat history.
 
@@ -407,10 +389,17 @@ def retrieve_context(query, retriever, chat_history=[]):
     # Retrieve documents using the chat history
     retrieved_docs = retriever.invoke({
         "input": query,
-        "chat_history": formatted_history
+        "chat_history": formatted_history,
+        "language": language
     })
 
     return retrieved_docs
+
+
+def get_multilingual_retriever(retriever1, retriever2):
+    ensemble_retriever = EnsembleRetriever(retrievers=[retriever1, retriever2],
+                                        weights=[0.5, 0.5])
+    return ensemble_retriever
 
 
 # import pickle
@@ -715,7 +704,7 @@ def rerank_docs(query, retrieved_docs, reranker_model):
     return ranked_docs
 
 
-def retrieve_context_reranked(query, retriever, reranker_model, chat_history=[]):
+def retrieve_context_reranked(query, retriever, reranker_model, chat_history=[], language="german"):
     """
     Retrieve the context and rerank them based on the selected re-ranking model,
     considering chat history.
@@ -729,7 +718,7 @@ def retrieve_context_reranked(query, retriever, reranker_model, chat_history=[])
     Returns:
     - Sorted list of chunks based on their relevance to the query
     """
-    retrieved_docs = retrieve_context(query, retriever, chat_history)
+    retrieved_docs = retrieve_context(query, retriever, chat_history, language)
 
     #print(type(retrieved_docs), type(retrieved_docs[0]) if retrieved_docs else None)
 

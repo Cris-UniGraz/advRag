@@ -9,14 +9,17 @@ from rag import (
     load_embedding_model,
     retrieve_context_reranked,
     azure_openai_call,
-    get_ensemble_retriever
+    get_ensemble_retriever,
+    get_multilingual_retriever
 )
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
 
-EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
+# EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
+GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
+ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
 MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
@@ -37,12 +40,16 @@ def main(
     print("\n")
 
     llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
-    embedding_model = load_embedding_model(model_name=EMBEDDING_MODEL_NAME)
+    german_embedding_model = load_embedding_model(model_name=GERMAN_EMBEDDING_MODEL_NAME)
+    english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
 
     #docs = load_documents(folder_path=directory)
 
     # Ensemble Retrieval
-    retriever = get_ensemble_retriever(directory, embedding_model, llm, collection_name=COLLECTION_NAME, top_k=MAX_CHUNKS_CONSIDERED)
+    german_retriever = get_ensemble_retriever(f"{directory}/de", german_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_de", top_k=MAX_CHUNKS_CONSIDERED, language="german")
+    english_retriever = get_ensemble_retriever(f"{directory}/en", english_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_en", top_k=MAX_CHUNKS_CONSIDERED, language="english")
+
+    retriever = get_multilingual_retriever(german_retriever, english_retriever)
 
     prompt_template = ChatPromptTemplate.from_template(
         (
@@ -83,7 +90,8 @@ def main(
             query, 
             retriever=retriever, 
             reranker_model=RERANKING_TYPE,
-            chat_history=chat_history  # Añadir el historial
+            chat_history=chat_history, # Añadir el historial
+            language = "german"
         )
 
         text = ""
