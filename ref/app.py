@@ -62,7 +62,10 @@ def main(
     chain = prompt_template | llm | StrOutputParser()
 
     print(f"\n{BLUE}{BOLD}------------------------- Willkommen im UniChatBot -------------------------{RESET}")
-  
+    
+    # Añadir una lista para mantener el historial
+    chat_history = []
+
     while True:
         print("\n")
 
@@ -77,7 +80,10 @@ def main(
             break
 
         context = retrieve_context_reranked(
-            query, retriever=retriever, reranker_model=RERANKING_TYPE
+            query, 
+            retriever=retriever, 
+            reranker_model=RERANKING_TYPE,
+            chat_history=chat_history  # Añadir el historial
         )
 
         text = ""
@@ -94,11 +100,15 @@ def main(
         # Imprimir "LLM-Antwort:" en azul negrita
         print(f"{BLUE}{BOLD}\n>> LLM-Antwort: {RESET}", end="")
 
-        # Imprimir la respuesta del LLM en verde negrita
-        for e in chain.stream({"context": text, "question": query}):
-            print(e, end="")
-            # print(f"{e}{RESET}", end="")
+        # Recolectar la respuesta del streaming
+        response = ""
+        for chunk in chain.stream({"context": text, "question": query}):
+            print(chunk, end="")
+            response += chunk
         print("\n")
+
+        # Guardar la interacción en el historial
+        chat_history.append((query, response))  # response es la respuesta del LLM
 
         show_sources = True
 
