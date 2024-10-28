@@ -3,6 +3,7 @@ from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.chains import create_history_aware_retriever
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_openai import AzureOpenAIEmbeddings
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -103,25 +104,33 @@ def load_embedding_model(
     model_name = EMBEDDING_MODEL_NAME, 
 ):
     """
-    Loads an embedding model from the Hugging Face repository with specified configurations.
+    Loads an embedding model from either Azure OpenAI or Hugging Face repository.
 
     Parameters:
-    - model_name: The name of the model to load. Defaults to "BAAI/bge-large-en-v1.5".
-    - device: The device to run the model on (e.g., 'cpu', 'cuda', 'mps'). Defaults to 'mps'.
+    - model_name: The name of the model to load. Use "openai" for Azure OpenAI embeddings
+                 or a Hugging Face model name (defaults to EMBEDDING_MODEL_NAME).
 
     Returns:
-    - An instance of HuggingFaceBgeEmbeddings configured with the specified model and device.
+    - An instance of AzureOpenAIEmbeddings or HuggingFaceBgeEmbeddings
 
     Raises:
     - ValueError: If an unsupported device is specified.
-    - OSError: If the model cannot be loaded from the Hugging Face repository.
+    - OSError: If the model cannot be loaded.
     """
 
     try:
-        if model_name=="openai":
-             embedding_model = OpenAIEmbeddings(model="text-embedding-3-small")
+        if model_name == "azure_openai":
+            embedding_model = AzureOpenAIEmbeddings(
+                azure_deployment=os.getenv("AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_ID"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
+            )
+            aoaimodel=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
+            print(f"Se ha cargado el embedding model de Azure OpenAI: {aoaimodel}")
         else:
-            model_name=EMBEDDING_MODEL_NAME 
+            model_name = EMBEDDING_MODEL_NAME 
             if torch.backends.mps.is_available():
                 device = "mps"
             elif torch.cuda.is_available():
