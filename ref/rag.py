@@ -1,44 +1,33 @@
-import os
-from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.chains import create_history_aware_retriever
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-from langchain_openai import AzureOpenAIEmbeddings
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from rich import print
-import torch
-from langchain_community.retrievers import BM25Retriever
-from langchain.retrievers import EnsembleRetriever
-from langchain.retrievers import ParentDocumentRetriever
-from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
-
-# import fitz  # PyMuPDF
-from langchain.docstore.document import Document
-
-# import docx
-# import openpyxl
-from langchain_milvus import Milvus
-from langchain.schema import HumanMessage
-from dotenv import load_dotenv
-from pathlib import Path
-from openai import AzureOpenAI
-from pymilvus import connections, Collection, utility
-from langchain.chains import HypotheticalDocumentEmbedder
-from tqdm import tqdm
-
-from langchain_community.storage.mongodb import MongoDBStore
-from pymongo import MongoClient
-
-from pathlib import Path
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.schema import Document
-from rag2.loaders import load_pdf, load_docx, load_xlsx
-
 import asyncio
-from typing import List, Tuple
+import os
+import torch
 from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
+from langchain.chains import HypotheticalDocumentEmbedder, create_history_aware_retriever
+from langchain.docstore.document import Document
+from langchain.retrievers import EnsembleRetriever, ParentDocumentRetriever
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.schema import Document, HumanMessage
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.retrievers import BM25Retriever
+from langchain_community.storage.mongodb import MongoDBStore
+from langchain_core.documents import Document
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.output_parsers import BaseOutputParser, StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
+from langchain_milvus import Milvus
+from langchain_openai import AzureOpenAIEmbeddings
+from openai import AzureOpenAI
+from pathlib import Path
+from pymilvus import connections, utility
+from pymongo import MongoClient
+from rich import print
+from tqdm import tqdm
+from typing import List, Any
+
+from rag2.loaders import load_pdf, load_docx, load_xlsx
+from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -389,11 +378,6 @@ async def retrieve_context_async(query: str, retriever, chat_history=[], languag
     return retrieved_docs
 
 
-# import pickle
-from pymongo import MongoClient
-from bson.binary import Binary
-from langchain_community.retrievers import BM25Retriever
-
 def get_mongo_collection(collection_name):
     client = MongoClient(MONGODB_CONNECTION_STRING)
     db = client[MONGODB_DATABASE_NAME]
@@ -433,14 +417,7 @@ def load_bm25(collection_name):
     except Exception as e:
         print(f"Error al crear BM25Retriever: {str(e)}")
         return None
-    
-
-from typing import List
-
-from langchain_core.output_parsers import BaseOutputParser
-from langchain_core.prompts import PromptTemplate
-from pydantic import BaseModel, Field
-
+ 
 
 # Output parser will split the LLM result into a list of queries
 class LineListOutputParser(BaseOutputParser[List[str]]):
@@ -450,9 +427,6 @@ class LineListOutputParser(BaseOutputParser[List[str]]):
         lines = text.strip().split("\n")
         return list(filter(None, lines))  # Remove empty lines
 
-
-from langchain_milvus import Milvus
-from pymilvus import connections, Collection, utility
 
 def create_parent_retriever(
     vectorstore,
