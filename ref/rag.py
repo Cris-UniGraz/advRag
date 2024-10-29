@@ -277,6 +277,32 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
 
         # Crear o cargar el vectorstore base with history awareness
         base_retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
+
+        # Crear el retriever de palabras clave
+        # keyword_retriever = BM25Retriever.from_documents(docs)
+        keyword_retriever = load_bm25(f'{collection_name}_parents')
+        if keyword_retriever is None:
+            keyword_retriever = base_retriever
+        else:
+            keyword_retriever.k = top_k
+
+        # Crear el retriever de consultas múltiples
+        multi_query_retriever = get_multi_query_retriever(base_retriever, llm, language)
+
+        # Crear el HyDE retriever
+        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
+
+        # Crear el ensemble retriever con los cinco retrievers
+        ensemble_retriever = EnsembleRetriever(
+            retrievers=[base_retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
+            # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
+            # weights=[0.0, 0.0, 1.0, 0.0, 0.0]
+
+            # Pesos finales
+            weights=[0.1, 0.1, 0.4, 0.1, 0.3]
+        )
+
+        # Regenerar la pregunta según el historial de chat
         contextualize_q_system_prompt = (
             f"Given a chat history and the latest user question "
             "which might reference context in the chat history, "
@@ -289,77 +315,13 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
             MessagesPlaceholder("chat_history"),
             ("human", "{input}")
         ])
-        history_aware_base_retriever = create_history_aware_retriever(
-            llm, base_retriever, contextualize_q_prompt
+        
+        # Agregar el historial del chat
+        history_aware_ensemble_retriever = create_history_aware_retriever(
+            llm, ensemble_retriever, contextualize_q_prompt
         )
 
-        # Crear el retriever de palabras clave with history awareness
-        # keyword_retriever = BM25Retriever.from_documents(docs)
-        keyword_retriever = load_bm25(f'{collection_name}_parents')
-        if keyword_retriever is None:
-            keyword_retriever = history_aware_base_retriever
-        else:
-            keyword_retriever.k = top_k
-            history_aware_keyword_retriever = create_history_aware_retriever(
-                llm, keyword_retriever, contextualize_q_prompt
-            )
-
-        # Crear el retriever de consultas múltiples with history awareness
-        try:
-            multi_query_retriever = get_multi_query_retriever(base_retriever, llm, language)
-        except Exception as e:
-            print(f"Warning: Could not create MultiQueryRetriever: {e}")
-            multi_query_retriever = base_retriever  # Usar el retriever base como fallback
-
-        # Crear el HyDE retriever with history awareness
-        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
-        history_aware_hyde_retriever = create_history_aware_retriever(
-            llm, hyde_retriever, contextualize_q_prompt
-        )
-
-        # Create parent retriever with history awareness
-        history_aware_parent_retriever = create_history_aware_retriever(
-            llm, parent_retriever, contextualize_q_prompt
-        )
-
-        # Crear el ensemble retriever con los cinco retrievers with all history-aware retrievers
-        working_retrievers = []
-        weights = []
-        
-        # Lista de tuplas con (nombre, retriever, peso)
-        retrievers_config = [
-            ("history_aware_base_retriever", history_aware_base_retriever, 0.1),
-            ("history_aware_keyword_retriever", history_aware_keyword_retriever if keyword_retriever is not None else history_aware_base_retriever, 0.1),
-            ("multi_query_retriever", multi_query_retriever, 0.4),
-            ("history_aware_hyde_retriever", history_aware_hyde_retriever, 0.1),
-            ("history_aware_parent_retriever", history_aware_parent_retriever, 0.3)
-        ]
-        
-        for name, retriever, weight in retrievers_config:
-            if retriever is not None:
-                working_retrievers.append(retriever)
-                weights.append(weight)
-                # print(f">> Retriever incluido en el ensemble_retriever: {name} .")
-        
-        # Normalizar los pesos
-        if weights:
-            total_weight = sum(weights)
-            weights = [w/total_weight for w in weights]
-        
-        # print(f">> Pesos del ensemble_retriever: {weights} .")
-        
-        ensemble_retriever = EnsembleRetriever(
-            retrievers=working_retrievers,
-            weights=weights
-        )
-        
-        '''
-        # Pesos finales
-        weights=[0.1, 0.1, 0.4, 0.1, 0.3]
-        )
-        '''
-
-        return ensemble_retriever
+        return history_aware_ensemble_retriever
         
 
     except Exception as e:
@@ -394,14 +356,6 @@ def retrieve_context(query, retriever, chat_history=[], language="german"):
     })
 
     return retrieved_docs
-
-
-'''
-def get_multilingual_retriever(retriever1, retriever2):
-    ensemble_retriever = EnsembleRetriever(retrievers=[retriever1, retriever2],
-                                        weights=[0.5, 0.5])
-    return ensemble_retriever
-'''
 
 
 # import pickle
@@ -584,23 +538,14 @@ def create_parent_retriever(
 def get_multi_query_retriever(base_retriever, llm, language):
     """
     Create a multi-query retriever based on the base retriever and LLM.
-    
     Parameters:
     - base_retriever: base retriever
     - llm: LLM to generate variations of queries.
-    - language: Language for generating queries
-    
     Returns:
     - A retriever that is able to generate multiple queries.
     """
-    # Si el base_retriever es un RunnableBinding, creamos un nuevo retriever básico
-    if hasattr(base_retriever, 'retriever'):
-        vectorstore = base_retriever.retriever.vectorstore
-        base_retriever = vectorstore.as_retriever(search_kwargs={"k": base_retriever.retriever.search_kwargs.get("k", 4)})
-
     output_parser = LineListOutputParser()
-    
-    prompt = PromptTemplate(
+    QUERY_PROMPT = PromptTemplate(
         input_variables=["question"],
         template=f"""You are an AI language model assistant. Your task is to generate five 
     different versions of the given user question in {language} to retrieve relevant documents from a vector 
@@ -609,34 +554,11 @@ def get_multi_query_retriever(base_retriever, llm, language):
     Provide these alternative questions separated by newlines.
     Original question: {{question}}""",
     )
+    llm_chain = QUERY_PROMPT | llm | output_parser
 
-    # Modificar la cadena para asegurar que la salida sea un string
-    def format_output(output):
-        if hasattr(output, 'text'):
-            return output.text
-        return str(output)
-    
-    # Crear la cadena LLM con el formato correcto
-    llm_chain = (
-        {"question": lambda x: x}
-        | prompt
-        | llm
-        | format_output
-        | output_parser
-    )
-    
-    # Crear el MultiQueryRetriever
-    try:
-        retriever = MultiQueryRetriever(
-            retriever=base_retriever,
-            llm_chain=llm_chain,
-            parser_key="lines"  # Este es el nombre de la clave que contendrá las queries generadas
-        )
-        return retriever
-    except Exception as e:
-        print(f"Error creating MultiQueryRetriever: {e}")
-        # En caso de error, devolver el retriever original
-        return base_retriever
+    retriever = MultiQueryRetriever(retriever=base_retriever, llm_chain=llm_chain)
+
+    return retriever
 
 
 def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3):
@@ -665,13 +587,7 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
         base_embeddings=embedding_model,
     )
     hyde_vectorstore = get_milvus_collection(hyde_embeddings, collection_name)
-    '''
-    vectorstore = Milvus(
-        hyde_embeddings,
-        connection_args={"uri": VECTOR_DATABASE_URI},
-        collection_name=collection_name,
-    )
-    '''
+
     hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
 
     return hyde_retriever
@@ -722,14 +638,11 @@ def retrieve_context_reranked(query, retriever1, retriever2, reranker_type_1, re
     """
     retrieved_docs_1 = retrieve_context(query, retriever1, chat_history, language)
     retrieved_docs_2 = retrieve_context(query, retriever2, chat_history, language)
-    retrieved_docs = retrieved_docs_1 + retrieved_docs_2
-
-    #print(type(retrieved_docs), type(retrieved_docs[0]) if retrieved_docs else None)
-
-    if len(retrieved_docs) == 0:
+    if len(retrieved_docs_1) == 0 and len(retrieved_docs_2) == 0:
         print(
             f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. Versuche, deine Frage zu ändern!"
         )
+
     reranked_docs_1 = rerank_docs(
         query=query, retrieved_docs=retrieved_docs_1, reranker_type=reranker_type_1, reranking_model=os.getenv("GERMAN_COHERE_RERANKING_MODEL")
     )

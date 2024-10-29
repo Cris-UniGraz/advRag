@@ -118,7 +118,7 @@ def main(
         show_sources = True
 
         if show_sources:
-            print(f"{BLUE}{BOLD}>> Gefundene Quellen:{RESET}")
+            print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
             unique_sources = {}
             for document in filtered_context:
                 source = os.path.basename(document.metadata['source'])
