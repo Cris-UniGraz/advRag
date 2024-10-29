@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from langchain.chains import HypotheticalDocumentEmbedder, create_history_aware_retriever
 from langchain.docstore.document import Document
 from langchain.retrievers import EnsembleRetriever, ParentDocumentRetriever
+from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.schema import Document, HumanMessage
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -27,7 +28,6 @@ from tqdm import tqdm
 from typing import List, Any
 
 from rag2.loaders import load_pdf, load_docx, load_xlsx
-from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
