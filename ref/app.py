@@ -43,8 +43,8 @@ async def main(
     english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
 
     # Ensemble Retrieval
-    german_retriever = get_ensemble_retriever(f"{directory}/de", german_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_de", top_k=MAX_CHUNKS_CONSIDERED, language="german")
-    english_retriever = get_ensemble_retriever(f"{directory}/en", english_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_en", top_k=MAX_CHUNKS_CONSIDERED, language="english")
+    german_retriever = await get_ensemble_retriever(f"{directory}/de", german_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_de", top_k=MAX_CHUNKS_CONSIDERED, language="german")
+    english_retriever = await get_ensemble_retriever(f"{directory}/en", english_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_en", top_k=MAX_CHUNKS_CONSIDERED, language="english")
 
     prompt_template = ChatPromptTemplate.from_template(
         (

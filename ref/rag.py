@@ -226,21 +226,21 @@ def create_milvus_collection(docs, embedding_model, chunk_size, chunk_overlap, c
     return vectorstore
 
 
-def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="test", top_k=3, language="german"):
+async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="test", top_k=3, language="german", max_concurrency=5):
     """
-    Initializes a retriever object with chat history awareness to fetch the top_k most relevant documents.
-    Now includes chat history awareness in all retrievers in the ensemble.
-
+    Initializes an async ensemble retriever with parallel search capabilities.
+    
     Parameters:
     - folder_path: Path to the documents folder
-    - embedding_model: The embedding model to use for generating document embeddings
-    - llm: Language model to use for query reformulation and HyDE
+    - embedding_model: The embedding model to use
+    - llm: Language model for query reformulation
     - collection_name: The name of the collection
-    - top_k: The number of top relevant documents to retrieve
+    - top_k: Number of top relevant documents to retrieve
     - language: The language for prompts and responses
-
+    - max_concurrency: Maximum number of concurrent operations
+    
     Returns:
-    - An ensemble retriever object that considers chat history when retrieving documents
+    - An async ensemble retriever configured for parallel search
     """
     if top_k < 1:
         raise ValueError("top_k must be at least 1")
@@ -250,72 +250,71 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
         connections.connect()
 
         if utility.has_collection(collection_name):
-            # Cargar el vectorstore base
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
-
-            # Crear el Parent Document Retriever
             children_vectorstore = get_milvus_collection(embedding_model, collection_name)
             parent_retriever = create_parent_retriever(children_vectorstore, collection_name, top_k)
         else:
-            # Cargar los documentos
-            # docs = load_documents(folder_path=folder_path)
             docs = split_documents(load_documents(folder_path=folder_path), PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP)
-            
-            # Crear el vectorstore base
             base_vectorstore = create_milvus_collection(docs, embedding_model, CHUNK_SIZE, CHUNK_OVERLAP, collection_name)
-
-            # Crear el Parent Document Retriever
             children_vectorstore = get_milvus_collection(embedding_model, collection_name)
             parent_retriever = create_parent_retriever(children_vectorstore, collection_name, top_k, docs=docs)
 
-        # Crear o cargar el vectorstore base with history awareness
+        # Configurar retrievers individuales
         base_retriever = base_vectorstore.as_retriever(search_kwargs={"k": top_k})
-
-        # Crear el retriever de palabras clave
-        # keyword_retriever = BM25Retriever.from_documents(docs)
+        
         keyword_retriever = load_bm25(f'{collection_name}_parents')
         if keyword_retriever is None:
             keyword_retriever = base_retriever
         else:
             keyword_retriever.k = top_k
 
-        # Crear el retriever de consultas múltiples
         multi_query_retriever = get_multi_query_retriever(parent_retriever, llm, language)
-
-        # Crear el HyDE retriever
         hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
 
-        # Crear el ensemble retriever con los cinco retrievers
+        # Crear el ensemble retriever con configuración para búsqueda paralela
         ensemble_retriever = EnsembleRetriever(
-            retrievers=[base_retriever, keyword_retriever, multi_query_retriever, hyde_retriever, parent_retriever],
+            retrievers=[
+                base_retriever,
+                keyword_retriever,
+                multi_query_retriever,
+                hyde_retriever,
+                parent_retriever
+            ],
             # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
             # weights=[0.0, 0.0, 1.0, 0.0, 0.0]
 
             # Pesos finales
-            weights=[0.1, 0.1, 0.4, 0.1, 0.3]
+            weights=[0.1, 0.1, 0.4, 0.1, 0.3],
+            c=60,
+            batch_config={
+                "max_concurrency": max_concurrency
+            }
         )
 
-        # Regenerar la pregunta según el historial de chat
+        # Configurar el prompt para contextualizar preguntas con el historial
         contextualize_q_system_prompt = (
             f"Given a chat history and the latest user question "
             "which might reference context in the chat history, "
             "formulate a standalone question which can be understood "
             "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is. Give the question in {language}."
+            "just reformulate it if needed and otherwise return it as is. "
+            f"Give the question in {language}."
         )
+        
         contextualize_q_prompt = ChatPromptTemplate.from_messages([
             ("system", contextualize_q_system_prompt),
             MessagesPlaceholder("chat_history"),
             ("human", "{input}")
         ])
         
-        # Agregar el historial del chat
-        history_aware_ensemble_retriever = create_history_aware_retriever(
-            llm, ensemble_retriever, contextualize_q_prompt
+        # Crear el retriever con awareness del historial
+        history_aware_retriever = create_history_aware_retriever(
+            llm,
+            ensemble_retriever,
+            contextualize_q_prompt
         )
 
-        return history_aware_ensemble_retriever
-        
+        return history_aware_retriever
 
     except Exception as e:
         print(f"An error occurred while initializing the retriever: {e}")
@@ -647,10 +646,11 @@ async def retrieve_context_reranked(
     reranker_type_1: str,
     reranker_type_2: str,
     chat_history=[],
-    language="german"
+    language="german",
 ):
     """
-    Versión asíncrona que ejecuta las recuperaciones y reranking en paralelo.
+    Versión asíncrona mejorada que ejecuta las recuperaciones y reranking en paralelo,
+    aprovechando las capacidades de búsqueda paralela del EnsembleRetriever.
     """
     try:
         # 1. Ejecutar ambas recuperaciones en paralelo
@@ -659,7 +659,7 @@ async def retrieve_context_reranked(
             retrieve_context_async(query, retriever2, chat_history, language)
         ]
         retrieved_docs_1, retrieved_docs_2 = await asyncio.gather(*retrieval_tasks)
-
+        
         # Verificar si se encontraron documentos
         if not (retrieved_docs_1 or retrieved_docs_2):
             print(
@@ -668,7 +668,7 @@ async def retrieve_context_reranked(
             )
             return []
 
-        # 2. Ejecutar ambos reranking en paralelo
+                # 2. Ejecutar ambos reranking en paralelo
         reranking_tasks = [
             rerank_docs_async(
                 query,
@@ -694,12 +694,10 @@ async def retrieve_context_reranked(
             key=lambda x: x.metadata.get('reranking_score', 0),
             reverse=True  # Higher scores first
         )
-
         if not sorted_docs:
             print("Die re-rankteten Dokumente sind 0.")
             
         return sorted_docs
-
     except Exception as e:
         print(f"Error en retrieve_context_reranked: {str(e)}")
         return []
