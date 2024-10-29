@@ -33,7 +33,7 @@ GREEN = "\033[32m"
 BOLD = "\033[1m"
 RESET = "\033[0m"  # Para resetear el formato
 
-def main(
+async def main(
     directory: str = DIRECTORY_PATH
 ):
     print("\n")
@@ -80,8 +80,9 @@ def main(
         
         if query == "exit":
             break
-
-        context = retrieve_context_reranked(
+        
+        # Llamada asincrónica
+        context = await retrieve_context_reranked(
             query, 
             retriever1=german_retriever,
             retriever2= english_retriever,

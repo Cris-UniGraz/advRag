@@ -36,6 +36,10 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
 from rag2.loaders import load_pdf, load_docx, load_xlsx
 
+import asyncio
+from typing import List, Tuple
+from concurrent.futures import ThreadPoolExecutor
+
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
@@ -287,7 +291,7 @@ def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="t
             keyword_retriever.k = top_k
 
         # Crear el retriever de consultas múltiples
-        multi_query_retriever = get_multi_query_retriever(base_retriever, llm, language)
+        multi_query_retriever = get_multi_query_retriever(parent_retriever, llm, language)
 
         # Crear el HyDE retriever
         hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
@@ -354,6 +358,33 @@ def retrieve_context(query, retriever, chat_history=[], language="german"):
         "chat_history": formatted_history,
         "language": language
     })
+
+    return retrieved_docs
+
+
+async def retrieve_context_async(query: str, retriever, chat_history=[], language="german"):
+    """
+    Versión asíncrona de retrieve_context que permite ejecución paralela.
+    """
+    # Convert chat history to the format expected by the retriever
+    formatted_history = []
+    for human_msg, ai_msg in chat_history:
+        formatted_history.extend([
+            HumanMessage(content=human_msg),
+            AIMessage(content=ai_msg)
+        ])
+
+    # Usar ThreadPoolExecutor para ejecutar la operación de recuperación en un thread separado
+    with ThreadPoolExecutor() as executor:
+        loop = asyncio.get_event_loop()
+        retrieved_docs = await loop.run_in_executor(
+            executor,
+            lambda: retriever.invoke({
+                "input": query,
+                "chat_history": formatted_history,
+                "language": language
+            })
+        )
 
     return retrieved_docs
 
@@ -622,47 +653,82 @@ def rerank_docs(query, retrieved_docs, reranker_type, reranking_model):
     return ranked_docs
 
 
-def retrieve_context_reranked(query, retriever1, retriever2, reranker_type_1, reranker_type_2, chat_history=[], language="german"):
+async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str, reranking_model: str):
     """
-    Retrieve the context and rerank them based on the selected re-ranking model,
-    considering chat history.
-
-    Parameters:
-    - query: user query - string
-    - retriever: retriever instance
-    - reranker_model: the model selection
-    - chat_history: List of previous chat messages as (human_message, ai_message) tuples
-
-    Returns:
-    - Sorted list of chunks based on their relevance to the query
+    Versión asíncrona de rerank_docs que permite ejecución paralela.
     """
-    retrieved_docs_1 = retrieve_context(query, retriever1, chat_history, language)
-    retrieved_docs_2 = retrieve_context(query, retriever2, chat_history, language)
-    if len(retrieved_docs_1) == 0 and len(retrieved_docs_2) == 0:
-        print(
-            f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. Versuche, deine Frage zu ändern!"
+    with ThreadPoolExecutor() as executor:
+        loop = asyncio.get_event_loop()
+        ranked_docs = await loop.run_in_executor(
+            executor,
+            lambda: rerank_docs(query, retrieved_docs, reranker_type, reranking_model)
+        )
+    return ranked_docs
+
+
+async def retrieve_context_reranked(
+    query: str,
+    retriever1,
+    retriever2,
+    reranker_type_1: str,
+    reranker_type_2: str,
+    chat_history=[],
+    language="german"
+):
+    """
+    Versión asíncrona que ejecuta las recuperaciones y reranking en paralelo.
+    """
+    try:
+        # 1. Ejecutar ambas recuperaciones en paralelo
+        retrieval_tasks = [
+            retrieve_context_async(query, retriever1, chat_history, language),
+            retrieve_context_async(query, retriever2, chat_history, language)
+        ]
+        retrieved_docs_1, retrieved_docs_2 = await asyncio.gather(*retrieval_tasks)
+
+        # Verificar si se encontraron documentos
+        if not (retrieved_docs_1 or retrieved_docs_2):
+            print(
+                f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. "
+                "Versuche, deine Frage zu ändern!"
+            )
+            return []
+
+        # 2. Ejecutar ambos reranking en paralelo
+        reranking_tasks = [
+            rerank_docs_async(
+                query,
+                retrieved_docs_1,
+                reranker_type_1,
+                os.getenv("GERMAN_COHERE_RERANKING_MODEL")
+            ),
+            rerank_docs_async(
+                query,
+                retrieved_docs_2,
+                reranker_type_2,
+                os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
+            )
+        ]
+        reranked_docs_1, reranked_docs_2 = await asyncio.gather(*reranking_tasks)
+
+        # 3. Combinar y ordenar los resultados
+        all_reranked_docs = reranked_docs_1 + reranked_docs_2
+        
+        # Ordenar todos los documentos por su reranking_score
+        sorted_docs = sorted(
+            all_reranked_docs,
+            key=lambda x: x.metadata.get('reranking_score', 0),
+            reverse=True  # Higher scores first
         )
 
-    reranked_docs_1 = rerank_docs(
-        query=query, retrieved_docs=retrieved_docs_1, reranker_type=reranker_type_1, reranking_model=os.getenv("GERMAN_COHERE_RERANKING_MODEL")
-    )
-    reranked_docs_2 = rerank_docs(
-        query=query, retrieved_docs=retrieved_docs_2, reranker_type=reranker_type_2, reranking_model=os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
-    )
-    # Combine both sets of reranked documents
-    all_reranked_docs = reranked_docs_1 + reranked_docs_2
+        if not sorted_docs:
+            print("Die re-rankteten Dokumente sind 0.")
+            
+        return sorted_docs
 
-    # Sort all documents by their reranking_score
-    sorted_docs = sorted(
-        all_reranked_docs,
-        key=lambda x: x.metadata.get('reranking_score', 0),
-        reverse=True  # Higher scores first
-    )
-
-    if len(sorted_docs) == 0:
-        print("Die re-rankteten Dokumente sind 0.")
-        
-    return sorted_docs
+    except Exception as e:
+        print(f"Error en retrieve_context_reranked: {str(e)}")
+        return []
 
 
 def azure_openai_call(prompt):
