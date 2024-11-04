@@ -22,3 +22,4 @@ transformers
 torch
 llama-parse
 pydantic
+filetype

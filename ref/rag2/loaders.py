@@ -1,3 +1,4 @@
+import filetype
 import os
 import re
 import pymupdf
@@ -7,6 +8,41 @@ from langchain_community.document_loaders import WebBaseLoader
 
 os.getenv("USER_AGENT")
 
+
+def load_documents(folder_path):
+    documents = []
+    for file in os.listdir(folder_path):
+        if not file.startswith('~$'):
+            file_path = os.path.join(folder_path, file)
+            kind = filetype.guess(file_path)
+            if kind is not None:
+                if kind.extension == FileType.PDF:
+                    documents.extend(load_pdf(file_path, file))
+                elif (kind.extension == FileType.WORD) or (kind.extension == FileType.WORDX):
+                    documents.extend(load_docx(file_path, file))
+                elif (kind.extension == FileType.EXCEL) or (kind.extension == FileType.EXCELX):
+                    documents.extend(load_xlsx(file_path, file))
+
+    return documents
+
+
+'''
+def load_documents(folder_path): # ORIGINAL
+    documents = []
+    for file in os.listdir(folder_path):
+        if not file.startswith('~$'):
+            file_path = os.path.join(folder_path, file)
+            if file.lower().endswith('.pdf'):
+                documents.extend(load_pdf(file_path, file, PAGE_OVERLAP))
+            elif file.lower().endswith('.docx'):
+                documents.extend(load_docx(file_path, file))
+            elif file.lower().endswith('.xlsx'):
+                documents.extend(load_xlsx(file_path, file))
+    return documents
+'''
+
+
+'''
 def load_documents(file_type, file, filename):
     if file_type == FileType.PDF:
         documents = load_pdf(file, filename)
@@ -16,6 +52,7 @@ def load_documents(file_type, file, filename):
         documents = load_excel(file, filename)
 
     return documents
+'''
 
 
 def load_pdf(file, filename, page_overlap=256):
@@ -266,6 +303,8 @@ def extract_sheet_name(text):
 # Tipos de archivo y extensiones permitidas
 class FileType:
     PDF = "pdf"
-    WORD = "word"
-    EXCEL = "excel"
-    WEBPAGE = "webpage"
+    WORD = "doc"
+    WORDX = "docx"
+    EXCEL = "xls"
+    EXCELX = "xlsx"
+    WEBPAGE = "html"

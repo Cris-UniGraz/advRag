@@ -27,7 +27,7 @@ from rich import print
 from tqdm import tqdm
 from typing import List, Any
 
-from rag2.loaders import load_pdf, load_docx, load_xlsx
+from rag2.loaders import load_documents, load_pdf, load_docx, load_xlsx
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -44,20 +44,6 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 16))
 PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
 PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", 0))
 PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
-
-
-def load_documents(folder_path):
-    documents = []
-    for file in os.listdir(folder_path):
-        if not file.startswith('~$'):
-            file_path = os.path.join(folder_path, file)
-            if file.lower().endswith('.pdf'):
-                documents.extend(load_pdf(file_path, file, PAGE_OVERLAP))
-            elif file.lower().endswith('.docx'):
-                documents.extend(load_docx(file_path, file))
-            elif file.lower().endswith('.xlsx'):
-                documents.extend(load_xlsx(file_path, file))
-    return documents
 
 
 def split_documents(documents, split_size, split_overlap):
