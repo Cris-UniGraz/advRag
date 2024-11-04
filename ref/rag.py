@@ -25,9 +25,10 @@ from pymilvus import connections, utility
 from pymongo import MongoClient
 from rich import print
 from tqdm import tqdm
-from typing import List, Any
+from typing import List
 
-from rag2.loaders import load_documents, load_pdf, load_docx, load_xlsx
+from rag2.loaders import load_documents
+
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -64,19 +65,6 @@ def split_documents(documents, split_size, split_overlap):
             split_docs.append(Document(page_content=split, metadata=metadata))
     
     return split_docs
-
-
-def process_documents(folder_path):
-    # Cargar documentos
-    documents = load_documents(folder_path)
-    
-    # Dividir en documentos de tamaño DOC_SIZE
-    split_docs = split_documents(documents, PARENT_CHUNK_SIZE, PARENT_CHUNK_OVERLAP)
-    
-    # Dividir en chunks de tamaño CHUNK_SIZE
-    split_chunks = split_documents(split_docs, CHUNK_SIZE, CHUNK_OVERLAP)
-    
-    return split_chunks
 
    
 def load_embedding_model(
@@ -306,35 +294,6 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
         print(f"An error occurred while initializing the retriever: {e}")
         raise
 
-def retrieve_context(query, retriever, chat_history=[], language="german"):
-    """
-    Retrieves documents relevant to a given query, considering chat history.
-
-    Parameters:
-    - query: The search query as a string
-    - retriever: An instance of a Retriever class used to fetch documents
-    - chat_history: List of previous chat messages as (human_message, ai_message) tuples
-
-    Returns:
-    - A list of documents deemed relevant to the query
-    """
-    # Convert chat history to the format expected by the retriever
-    formatted_history = []
-    for human_msg, ai_msg in chat_history:
-        formatted_history.extend([
-            HumanMessage(content=human_msg),
-            AIMessage(content=ai_msg)
-        ])
-
-    # Retrieve documents using the chat history
-    retrieved_docs = retriever.invoke({
-        "input": query,
-        "chat_history": formatted_history,
-        "language": language
-    })
-
-    return retrieved_docs
-
 
 async def retrieve_context_async(query: str, retriever, chat_history=[], language="german"):
     """
@@ -435,12 +394,6 @@ def create_parent_retriever(
     Raises:
     - ValueError: If any input parameter is invalid.
     """
-
-    # Establecer conexión con Milvus
-    # connections.connect()
-
-    # Verificar si la colección ya existe en Milvus
-    # vectorstore = get_or_create_milvus_collection(docs, embedding_model, f"{collection_name}_children")
 
     parent_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
         separators=["\n\n\n", "\n\n", "\n", ".", ""],

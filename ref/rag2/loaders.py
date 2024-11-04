@@ -26,35 +26,6 @@ def load_documents(folder_path):
     return documents
 
 
-'''
-def load_documents(folder_path): # ORIGINAL
-    documents = []
-    for file in os.listdir(folder_path):
-        if not file.startswith('~$'):
-            file_path = os.path.join(folder_path, file)
-            if file.lower().endswith('.pdf'):
-                documents.extend(load_pdf(file_path, file, PAGE_OVERLAP))
-            elif file.lower().endswith('.docx'):
-                documents.extend(load_docx(file_path, file))
-            elif file.lower().endswith('.xlsx'):
-                documents.extend(load_xlsx(file_path, file))
-    return documents
-'''
-
-
-'''
-def load_documents(file_type, file, filename):
-    if file_type == FileType.PDF:
-        documents = load_pdf(file, filename)
-    elif file_type == FileType.WORD:
-        documents = load_word(file, filename)
-    elif file_type == FileType.EXCEL:
-        documents = load_excel(file, filename)
-
-    return documents
-'''
-
-
 def load_pdf(file, filename, page_overlap=256):
     documents = []
     try:
