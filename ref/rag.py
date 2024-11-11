@@ -589,13 +589,28 @@ async def retrieve_context_reranked(
 ):
     """
     Versión asíncrona mejorada que ejecuta las recuperaciones y reranking en paralelo,
-    aprovechando las capacidades de búsqueda paralela del EnsembleRetriever.
+    aprovechando ainvoke para búsquedas verdaderamente asíncronas.
     """
     try:
-        # 1. Ejecutar ambas recuperaciones en paralelo
+        # Convertir el historial de chat al formato esperado
+        formatted_history = []
+        for human_msg, ai_msg in chat_history:
+            formatted_history.extend([
+                HumanMessage(content=human_msg),
+                AIMessage(content=ai_msg)
+            ])
+        
+        # 1. Preparar los argumentos para ambos retrievers
+        retrieval_args = {
+            "input": query,
+            "chat_history": formatted_history,
+            "language": language
+        }
+        
+        # 2. Ejecutar ambas recuperaciones en paralelo usando ainvoke
         retrieval_tasks = [
-            retrieve_context_async(query, retriever1, chat_history, language),
-            retrieve_context_async(query, retriever2, chat_history, language)
+            retriever1.ainvoke(retrieval_args),
+            retriever2.ainvoke(retrieval_args)
         ]
         retrieved_docs_1, retrieved_docs_2 = await asyncio.gather(*retrieval_tasks)
         
@@ -607,7 +622,7 @@ async def retrieve_context_reranked(
             )
             return []
 
-                # 2. Ejecutar ambos reranking en paralelo
+        # 3. Ejecutar ambos reranking en paralelo
         reranking_tasks = [
             rerank_docs_async(
                 query,
@@ -624,7 +639,7 @@ async def retrieve_context_reranked(
         ]
         reranked_docs_1, reranked_docs_2 = await asyncio.gather(*reranking_tasks)
 
-        # 3. Combinar y ordenar los resultados
+        # 4. Combinar y ordenar los resultados
         all_reranked_docs = reranked_docs_1 + reranked_docs_2
         
         # Ordenar todos los documentos por su reranking_score
@@ -633,10 +648,12 @@ async def retrieve_context_reranked(
             key=lambda x: x.metadata.get('reranking_score', 0),
             reverse=True  # Higher scores first
         )
+        
         if not sorted_docs:
             print("Die re-rankteten Dokumente sind 0.")
             
         return sorted_docs
+    
     except Exception as e:
         print(f"Error en retrieve_context_reranked: {str(e)}")
         return []

@@ -123,14 +123,14 @@ async def main(
             for document in filtered_context:
                 source = os.path.basename(document.metadata['source'])
                 if document.metadata['source'].lower().endswith('.xlsx'):
-                    sheet = document.metadata.get('sheet', 'Unbekannt')
+                    sheet = document.metadata.get('sheet_name', 'Unbekannt')
                     key = (source, sheet)
                     if sheet != 'Unbekannt':
                         unique_sources[key] = f"- Dokument: {source} (Blatt: {sheet})"
                     else:
                         unique_sources[key] = f"- Dokument: {source}"
                 else:
-                    page = document.metadata.get('page', 'Unbekannt')
+                    page = document.metadata.get('page_number', 'Unbekannt')
                     key = (source, page)
                     if page != 'Unbekannt':
                         unique_sources[key] = f"- Dokument: {source} (Seite: {page})"
