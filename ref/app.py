@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 
 from rag import (
     load_embedding_model,
-    retrieve_context_reranked,
     azure_openai_call,
     get_ensemble_retriever,
+    process_queries_and_combine_results,
 )
 
 # Al principio del archivo, después de las importaciones
@@ -32,6 +32,8 @@ GREEN = "\033[32m"
 BOLD = "\033[1m"
 RESET = "\033[0m"  # Para resetear el formato
 
+LANGUAGE = "german"
+
 async def main(
     directory: str = DIRECTORY_PATH
 ):
@@ -42,20 +44,34 @@ async def main(
     english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
 
     # Ensemble Retrieval
-    german_retriever = await get_ensemble_retriever(f"{directory}/de", german_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_de", top_k=MAX_CHUNKS_CONSIDERED, language="german")
-    english_retriever = await get_ensemble_retriever(f"{directory}/en", english_embedding_model, llm, collection_name=f"{COLLECTION_NAME}_en", top_k=MAX_CHUNKS_CONSIDERED, language="english")
+    german_retriever = await get_ensemble_retriever(
+        f"{directory}/de",
+        german_embedding_model,
+        llm,
+        collection_name=f"{COLLECTION_NAME}_de",
+        top_k=MAX_CHUNKS_CONSIDERED,
+        language="german"
+    )
+    english_retriever = await get_ensemble_retriever(
+        f"{directory}/en",
+        english_embedding_model,
+        llm,
+        collection_name=f"{COLLECTION_NAME}_en",
+        top_k=MAX_CHUNKS_CONSIDERED,
+        language="english"
+    )
 
     prompt_template = ChatPromptTemplate.from_template(
         (
             """
-            Du bist eine erfahrene virtuelle Assistentin der Universität Graz und kennst alle Informationen über die Universität Graz. Deine Aufgabe ist es, auf der Grundlage der Benutzerfrage Informationen aus dem bereitgestellten KONTEXT zu extrahieren. 
-            Denk Schritt für Schritt und verwende nur die Informationen aus dem KONTEXT, die für die Benutzerfrage relevant sind. 
-            Wenn der KONTEXT keine Informationen enthält, um die ANFRAGE zu beantworten, gib nicht dein Wissen an, sondern antworte einfach:
-            Ich habe derzeit nicht genügend Informationen, um die Anfrage zu beantworten. Bitte stelle eine andere Anfrage.
-            Gib detaillierte Antworten auf Deutsch.
+            You are an experienced virtual assistant at the University of Graz and know all the information about the University of Graz.
+            Your main task is to extract information from the provided CONTEXT based on the user's QUERY.
+            Think step by step and only use the information from the CONTEXT that is relevant to the user's QUERY.
+            If the CONTEXT does not contain information to answer the QUESTION, do not state your knowledge, just answer: Ich habe derzeit nicht genügend Informationen, um die Anfrage zu beantworten. Bitte stelle eine andere Anfrage.
+            Give detailed answers in {language}.
 
-            ANFRAGE: ```{question}```\n
-            KONTEXT: ```{context}```\n
+            QUERY: ```{question}```\n
+            CONTEXT: ```{context}```\n
             """
         )
     )
@@ -81,14 +97,15 @@ async def main(
             break
         
         # Llamada asincrónica
-        context = await retrieve_context_reranked(
-            query, 
-            retriever1=german_retriever,
-            retriever2= english_retriever,
-            reranker_type_1=RERANKING_TYPE,
-            reranker_type_2=RERANKING_TYPE,
-            chat_history=chat_history, # Añadir el historial
-            language = "german"
+        context = await process_queries_and_combine_results(
+            query,
+            llm,
+            german_retriever,
+            english_retriever,
+            RERANKING_TYPE,
+            RERANKING_TYPE,
+            chat_history,
+            "german"
         )
 
         text = ""
@@ -107,7 +124,7 @@ async def main(
 
         # Recolectar la respuesta del streaming
         response = ""
-        for chunk in chain.stream({"context": text, "question": query}):
+        for chunk in chain.stream({"context": text, "language": LANGUAGE, "question": query}):
             print(chunk, end="")
             response += chunk
         print("\n")

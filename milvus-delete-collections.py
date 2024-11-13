@@ -8,7 +8,7 @@ connections.connect()
 all_collections = utility.list_collections()
 
 # Colecciones a mantener
-keep_collections = ["uni_test_2_0_alles", "uni_test_2_0_alles_children", "uni_test_2_0_alles_hyde"]
+keep_collections = ["uni_test_2_0_alles", "uni_test_2_0_alles_hyde", "uni_test_2_0_alles_children", "uni_test_3_0_de", "uni_test_3_0_en"]
 
 # Iterar sobre todas las colecciones y borrar las que no están en la lista de exclusión
 for collection_name in all_collections:

@@ -16,7 +16,7 @@ from langchain_community.storage.mongodb import MongoDBStore
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import BaseOutputParser, StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate, MessagesPlaceholder, PromptTemplate
 from langchain_milvus import Milvus
 from langchain_openai import AzureOpenAIEmbeddings
 from openai import AzureOpenAI
@@ -25,7 +25,7 @@ from pymilvus import connections, utility
 from pymongo import MongoClient
 from rich import print
 from tqdm import tqdm
-from typing import List
+from typing import Any, Dict, List, Tuple
 
 from rag2.loaders import load_documents
 
@@ -280,7 +280,7 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
             MessagesPlaceholder("chat_history"),
             ("human", "{input}")
         ])
-        
+
         # Crear el retriever con awareness del historial
         history_aware_retriever = create_history_aware_retriever(
             llm,
@@ -576,6 +576,142 @@ async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str
             lambda: rerank_docs(query, retrieved_docs, reranker_type, reranking_model)
         )
     return ranked_docs
+
+async def getStepBackQuery(
+    query: str,
+    llm: Any,  # Azure OpenAI LLM
+    language: str = "german"
+) -> str:
+    """
+    Generate a more generic step-back query from the original query.
+    
+    Args:
+        query: Original user query
+        llm: Azure OpenAI LLM instance
+    Returns:
+        str: Generated step-back query
+    """
+    examples = [
+        {
+            "input": "Could the members of The Police perform lawful arrests?",
+            "output": "what can the members of The Police do?",
+        },
+        {
+            "input": "Jan Sindel's was born in what country?",
+            "output": "what is Jan Sindel's personal history?",
+        },
+    ]
+
+    example_prompt = ChatPromptTemplate.from_messages([
+        ("human", "{input}"),
+        ("ai", "{output}"),
+    ])
+
+    few_shot_prompt = FewShotChatMessagePromptTemplate(
+        example_prompt=example_prompt,
+        examples=examples,
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        (
+            "system",
+            """You are an expert at world knowledge.
+            Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer.
+            Please note that the question has been asked in the context of the University of Graz.
+            Give the generic step-back question in {language}.
+            Here are a few examples:""",
+        ),
+        few_shot_prompt,
+        ("user", "{question}"),
+    ])
+
+    # Create the chain using the Azure OpenAI LLM
+    chain = prompt | llm | StrOutputParser()
+    
+    # Get the step-back query
+    step_back_query = await chain.ainvoke({"language": language, "question": query})
+
+    print(f"step_back_query: {step_back_query}")
+    
+    return step_back_query
+
+
+async def process_queries_and_combine_results(
+    query: str,
+    llm: Any,
+    retriever1: Any,
+    retriever2: Any,
+    reranker_type_1: str,
+    reranker_type_2: str,
+    chat_history: List[Tuple[str, str]] = [],
+    language: str = "german"
+) -> List[Document]:
+    """
+    Process both original and step-back queries in parallel and combine their results.
+    
+    Args:
+        query: Original user query
+        llm: Azure OpenAI LLM instance
+        retriever1: First retriever instance
+        retriever2: Second retriever instance
+        reranker_type_1: Type of first reranker
+        reranker_type_2: Type of second reranker
+        chat_history: List of chat history tuples
+        language: Query language
+    
+    Returns:
+        List[Document]: Combined and sorted list of retrieved documents
+    """
+    # Get step-back query
+    step_back_query = await getStepBackQuery(query, llm, language)
+    
+    # Process both queries in parallel
+    retrieval_tasks = [
+        retrieve_context_reranked(
+            query,
+            retriever1,
+            retriever2,
+            reranker_type_1,
+            reranker_type_2,
+            chat_history,
+            language
+        ),
+        retrieve_context_reranked(
+            step_back_query,
+            retriever1,
+            retriever2,
+            reranker_type_1,
+            reranker_type_2,
+            chat_history,
+            language
+        )
+    ]
+    
+    # Wait for both retrievals to complete
+    context_original, context_step_back = await asyncio.gather(*retrieval_tasks)
+    
+    # Combine and sort results
+    all_docs = context_original + context_step_back
+    
+    # Remove duplicates based on content and source
+    seen = set()
+    unique_docs = []
+    
+    for doc in all_docs:
+        # Create a unique identifier for the document
+        doc_id = (doc.page_content, doc.metadata.get('source'))
+        if doc_id not in seen:
+            seen.add(doc_id)
+            unique_docs.append(doc)
+    
+    # Sort by reranking score
+    sorted_docs = sorted(
+        unique_docs,
+        key=lambda x: x.metadata.get('reranking_score', 0),
+        reverse=True
+    )
+    
+    return sorted_docs
 
 
 async def retrieve_context_reranked(
