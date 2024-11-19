@@ -19,6 +19,8 @@ from langchain_core.output_parsers import BaseOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate, MessagesPlaceholder, PromptTemplate
 from langchain_milvus import Milvus
 from langchain_openai import AzureOpenAIEmbeddings
+from langsmith import traceable
+from langsmith.wrappers import wrap_openai
 from openai import AzureOpenAI
 from pathlib import Path
 from pymilvus import connections, utility
@@ -28,6 +30,8 @@ from tqdm import tqdm
 from typing import Any, Dict, List, Tuple
 
 from rag2.loaders import load_documents
+
+from glossary import find_glossary_terms, get_glossary  # Importa el método get_glossary
 
 
 # Al principio del archivo, después de las importaciones
@@ -46,6 +50,10 @@ PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
 PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", 0))
 PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
 
+# LangSmith configuration
+os.environ['LANGCHAIN_TRACING_V2'] = os.getenv("LANGCHAIN_TRACING_V2")
+os.environ['LANGCHAIN_API_KEY'] = os.getenv("LANGCHAIN_API_KEY")
+os.environ['LANGCHAIN_PROJECT'] = os.getenv("LANGCHAIN_PROJECT")
 
 def split_documents(documents, split_size, split_overlap):
     # Dividir documentos en tamaño DOC_SIZE
@@ -242,8 +250,8 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
         else:
             keyword_retriever.k = top_k
 
-        multi_query_retriever = get_multi_query_retriever(parent_retriever, llm, language)
-        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
+        multi_query_retriever = get_multi_query_retriever(parent_retriever, llm, language, glossary=get_glossary(language))
+        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k, glossary=get_glossary(language))
 
         # Crear el ensemble retriever con configuración para búsqueda paralela
         ensemble_retriever = EnsembleRetriever(
@@ -256,6 +264,7 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
             ],
             # weights=[0.2, 0.2, 0.2, 0.2, 0.2]  # Pesos iguales para todos los retrievers
             # weights=[0.0, 0.0, 1.0, 0.0, 0.0]
+            # weights=[0.1, 0.1, 0.4, 0.1, 0.3]
 
             # Pesos finales
             weights=[0.1, 0.1, 0.4, 0.1, 0.3],
@@ -478,62 +487,92 @@ def create_parent_retriever(
     return retriever
 
 
-def get_multi_query_retriever(base_retriever, llm, language):
+def get_multi_query_retriever(base_retriever, llm, language, glossary=None):
     """
-    Create a multi-query retriever based on the base retriever and LLM.
-    Parameters:
-    - base_retriever: base retriever
-    - llm: LLM to generate variations of queries.
-    Returns:
-    - A retriever that is able to generate multiple queries.
+    Create a glossary-aware multi-query retriever
     """
     output_parser = LineListOutputParser()
-    QUERY_PROMPT = PromptTemplate(
-        input_variables=["question"],
-        template=f"""You are an AI language model assistant. Your task is to generate five 
-    different versions of the given user question in {language} to retrieve relevant documents from a vector 
-    database. By generating multiple perspectives on the user question, your goal is to help
-    the user overcome some of the limitations of the distance-based similarity search. 
-    Provide these alternative questions separated by newlines.
-    Original question: {{question}}""",
+    
+    def create_multi_query_chain(query):
+        matching_terms = find_glossary_terms(query, glossary) if glossary else []
+        
+        if not matching_terms:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an AI language model assistant. Your task is to generate five 
+                different versions of the given user question in {language} to retrieve relevant documents.
+                By generating multiple perspectives on the user question, your goal is to help
+                overcome some limitations of distance-based similarity search.
+                Provide these alternative questions separated by newlines."""),
+                ("human", "{question}")
+            ])
+        else:
+            relevant_glossary = "\n".join([f"{term}: {explanation}" 
+                                         for term, explanation in matching_terms])
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""You are an AI language model assistant. Your task is to generate five 
+                different versions of the given user question in {language}.
+                The following terms from the question have specific meanings:
+                {relevant_glossary}
+                Generate questions that incorporate these specific meanings.
+                Provide these alternative questions separated by newlines."""),
+                ("human", "{question}")
+            ])
+
+        chain = prompt | llm | output_parser
+        return chain
+
+    class GlossaryAwareMultiQueryRetriever(MultiQueryRetriever):
+        async def _aget_relevant_documents(self, query: str, *, run_manager=None):
+            self.llm_chain = create_multi_query_chain(query)
+            return await super()._aget_relevant_documents(query, run_manager=run_manager)
+
+    retriever = GlossaryAwareMultiQueryRetriever(
+        retriever=base_retriever,
+        llm_chain=create_multi_query_chain("")
     )
-    llm_chain = QUERY_PROMPT | llm | output_parser
-
-    retriever = MultiQueryRetriever(retriever=base_retriever, llm_chain=llm_chain)
-
+    
     return retriever
 
 
-def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3):
+def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3, glossary=None):
     """
-    Initializes a HyDE retriever that generates multiple query variations based on the provided LLM.
-
-    Parameters:
-    - embedding_model: The embedding model used to generate document embeddings.
-    - llm: LLM to generate variations of queries.
-    - collection_name: The name of the collection in the vector store.
-    - top_k: The number of top relevant documents to retrieve. Defaults to 3.
-
-    Returns:
-    - An instance of a HyDE (Hypothetical Document Embedder)
+    Initializes a HyDE retriever with glossary-aware query generation
     """
-    QUERY_PROMPT = PromptTemplate(
-        input_variables=["question"],
-        template=f"""Please write a passage in {language} to answer the question.
-    Question: {{question}}""",
-    )
+    def create_hyde_chain(query):
+        matching_terms = find_glossary_terms(query, glossary) if glossary else []
+        
+        if not matching_terms:
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", f"Please write a passage in {language} to answer the question."),
+                ("human", "{question}")
+            ])
+        else:
+            relevant_glossary = "\n".join([f"{term}: {explanation}" 
+                                         for term, explanation in matching_terms])
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""Please write a passage in {language} to answer the question.
+                The following terms from the question have specific meanings:
+                {relevant_glossary}"""),
+                ("human", "{question}")
+            ])
 
-    llm_chain = QUERY_PROMPT | llm | StrOutputParser()
+        chain = prompt | llm | StrOutputParser()
+        return chain
 
-    hyde_embeddings = HypotheticalDocumentEmbedder(
-        llm_chain=llm_chain,
-        base_embeddings=embedding_model,
+    class GlossaryAwareHyDEEmbedder(HypotheticalDocumentEmbedder):
+        def embed_query(self, query: str, *args, **kwargs):
+            self.llm_chain = create_hyde_chain(query)
+            return super().embed_query(query, *args, **kwargs)
+
+    hyde_embeddings = GlossaryAwareHyDEEmbedder(
+        llm_chain=create_hyde_chain(""),  # Placeholder chain
+        base_embeddings=embedding_model
     )
+    
     hyde_vectorstore = get_milvus_collection(hyde_embeddings, collection_name)
-
-    hyde_retriever = hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
-
-    return hyde_retriever
+    return hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
 
 
 def rerank_docs(query, retrieved_docs, reranker_type, reranking_model):
@@ -636,6 +675,7 @@ async def getStepBackQuery(
     return step_back_query
 
 
+@traceable # Auto-trace this function
 async def process_queries_and_combine_results(
     query: str,
     llm: Any,
@@ -795,6 +835,7 @@ async def retrieve_context_reranked(
         return []
 
 
+@traceable # Auto-trace this function
 def azure_openai_call(prompt):
     # Si el prompt es un objeto HumanMessage, extraemos su contenido
     if isinstance(prompt, HumanMessage):
@@ -811,6 +852,7 @@ def azure_openai_call(prompt):
     )
     return response.choices[0].message.content
 
+
 def load_llm_client():
     dotenv_path = Path(ENV_VAR_PATH)
     load_dotenv(dotenv_path=dotenv_path)
@@ -820,6 +862,6 @@ def load_llm_client():
         api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
         api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
         azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-        azure_deployment=os.getenv("AAZURE_OPENAI_API_LLM_DEPLOYMENT_ID")
+        azure_deployment=os.getenv("AZURE_OPENAI_API_LLM_DEPLOYMENT_ID")
     )
-    return client
+    return wrap_openai(client)
