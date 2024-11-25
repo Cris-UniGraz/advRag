@@ -535,6 +535,7 @@ def get_multi_query_retriever(base_retriever, llm, language, glossary=None):
     return retriever
 
 
+
 def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3, glossary=None):
     """
     Initializes a HyDE retriever with glossary-aware query generation
@@ -679,10 +680,10 @@ async def getStepBackQuery(
 async def process_queries_and_combine_results(
     query: str,
     llm: Any,
-    retriever1: Any,
-    retriever2: Any,
-    reranker_type_1: str,
-    reranker_type_2: str,
+    retriever_de: Any,
+    retriever_en: Any,
+    reranker_type_de: str,
+    reranker_type_en: str,
     chat_history: List[Tuple[str, str]] = [],
     language: str = "german"
 ) -> List[Document]:
@@ -709,21 +710,19 @@ async def process_queries_and_combine_results(
     retrieval_tasks = [
         retrieve_context_reranked(
             query,
-            retriever1,
-            retriever2,
-            reranker_type_1,
-            reranker_type_2,
-            chat_history,
-            language
+            retriever_de,
+            retriever_en,
+            reranker_type_de,
+            reranker_type_en,
+            chat_history
         ),
         retrieve_context_reranked(
             step_back_query,
-            retriever1,
-            retriever2,
-            reranker_type_1,
-            reranker_type_2,
-            chat_history,
-            language
+            retriever_de,
+            retriever_en,
+            reranker_type_de,
+            reranker_type_en,
+            chat_history
         )
     ]
     
@@ -754,14 +753,14 @@ async def process_queries_and_combine_results(
     return sorted_docs
 
 
+@traceable # Auto-trace this function
 async def retrieve_context_reranked(
     query: str,
-    retriever1,
-    retriever2,
+    retriever_de,
+    retriever_en,
     reranker_type_1: str,
     reranker_type_2: str,
-    chat_history=[],
-    language="german",
+    chat_history=[]
 ):
     """
     Versión asíncrona mejorada que ejecuta las recuperaciones y reranking en paralelo,
@@ -777,16 +776,21 @@ async def retrieve_context_reranked(
             ])
         
         # 1. Preparar los argumentos para ambos retrievers
-        retrieval_args = {
+        retrieval_args_de = {
             "input": query,
             "chat_history": formatted_history,
-            "language": language
+            "language": "german"
+        }
+        retrieval_args_en = {
+            "input": query,
+            "chat_history": formatted_history,
+            "language": "english"
         }
         
         # 2. Ejecutar ambas recuperaciones en paralelo usando ainvoke
         retrieval_tasks = [
-            retriever1.ainvoke(retrieval_args),
-            retriever2.ainvoke(retrieval_args)
+            retriever_de.ainvoke(retrieval_args_de),
+            retriever_en.ainvoke(retrieval_args_en)
         ]
         retrieved_docs_1, retrieved_docs_2 = await asyncio.gather(*retrieval_tasks)
         

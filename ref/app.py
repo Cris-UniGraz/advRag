@@ -104,8 +104,7 @@ async def main(
             english_retriever,
             RERANKING_TYPE,
             RERANKING_TYPE,
-            chat_history,
-            "german"
+            chat_history
         )
 
         text = ""
