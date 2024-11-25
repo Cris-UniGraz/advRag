@@ -43,7 +43,7 @@ def get_glossary(language: str) -> Dict[str, str]:
     else:
         raise ValueError("Invalid language. Please use 'german' or 'english'.")
     
-def find_glossary_terms(query: str, glossary: Dict[str, str]) -> List[tuple[str, str]]:
+def find_glossary_terms_with_explanation(query: str, language: str) -> List[tuple[str, str]]:
     """
     Find glossary terms that appear in the query.
     Handles both single-word and multi-word terms.
@@ -55,6 +55,8 @@ def find_glossary_terms(query: str, glossary: Dict[str, str]) -> List[tuple[str,
     Returns:
         List of tuples containing matched terms and their explanations
     """
+    glossary = get_glossary(language)
+
     # Convert query to lowercase for case-insensitive matching
     query_lower = query.lower()
     
@@ -64,6 +66,35 @@ def find_glossary_terms(query: str, glossary: Dict[str, str]) -> List[tuple[str,
         # Convert term to lowercase for case-insensitive matching
         if term.lower() in query_lower:
             matches.append((term, explanation))
+    
+    # print(f"matches = {matches}")
+
+    return matches
+
+
+def find_glossary_terms(query: str, language: str) -> List[tuple[str, str]]:
+    """
+    Find glossary terms that appear in the query.
+    Handles both single-word and multi-word terms.
+    
+    Args:
+        query: The user query string
+        glossary: Dictionary of terms and their explanations
+    
+    Returns:
+        List of tuples containing matched terms and their explanations
+    """
+    glossary = get_glossary(language)
+
+    # Convert query to lowercase for case-insensitive matching
+    query_lower = query.lower()
+    
+    # Find matching terms
+    matches = []
+    for term, explanation in glossary.items():
+        # Convert term to lowercase for case-insensitive matching
+        if term.lower() in query_lower:
+            matches.append(term)
     
     # print(f"matches = {matches}")
 

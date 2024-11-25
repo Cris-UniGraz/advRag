@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Tuple
 
 from rag2.loaders import load_documents
 
-from glossary import find_glossary_terms, get_glossary  # Importa el método get_glossary
+from glossary import find_glossary_terms, find_glossary_terms_with_explanation, get_glossary  # Importa el método get_glossary
 
 
 # Al principio del archivo, después de las importaciones
@@ -250,8 +250,8 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
         else:
             keyword_retriever.k = top_k
 
-        multi_query_retriever = get_multi_query_retriever(parent_retriever, llm, language, glossary=get_glossary(language))
-        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k, glossary=get_glossary(language))
+        multi_query_retriever = get_multi_query_retriever(parent_retriever, llm, language)
+        hyde_retriever = get_hyde_retriever(embedding_model, llm, collection_name, language, top_k)
 
         # Crear el ensemble retriever con configuración para búsqueda paralela
         ensemble_retriever = EnsembleRetriever(
@@ -276,12 +276,7 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
 
         # Configurar el prompt para contextualizar preguntas con el historial
         contextualize_q_system_prompt = (
-            f"Given a chat history and the latest user question "
-            "which might reference context in the chat history, "
-            "formulate a standalone question which can be understood "
-            "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is. "
-            f"Give the question in {language}."
+            f"Given a chat history and the latest user question which might reference context in the chat history, formulate a standalone question which can be understood without the chat history. Do NOT answer the question, just reformulate it if needed and otherwise return it as is. Give the question in {language}."
         )
         
         contextualize_q_prompt = ChatPromptTemplate.from_messages([
@@ -487,22 +482,18 @@ def create_parent_retriever(
     return retriever
 
 
-def get_multi_query_retriever(base_retriever, llm, language, glossary=None):
+def get_multi_query_retriever(base_retriever, llm, language):
     """
     Create a glossary-aware multi-query retriever
     """
     output_parser = LineListOutputParser()
     
     def create_multi_query_chain(query):
-        matching_terms = find_glossary_terms(query, glossary) if glossary else []
+        matching_terms = find_glossary_terms_with_explanation(query, language)
         
         if not matching_terms:
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""You are an AI language model assistant. Your task is to generate five 
-                different versions of the given user question in {language} to retrieve relevant documents.
-                By generating multiple perspectives on the user question, your goal is to help
-                overcome some limitations of distance-based similarity search.
-                Provide these alternative questions separated by newlines."""),
+                ("system", f"""You are an AI language model assistant. Your task is to generate five different versions of the given user question in {language} to retrieve relevant documents. By generating multiple perspectives on the user question, your goal is to help overcome some limitations of distance-based similarity search. Provide these alternative questions separated by newlines."""),
                 ("human", "{question}")
             ])
         else:
@@ -510,12 +501,9 @@ def get_multi_query_retriever(base_retriever, llm, language, glossary=None):
                                          for term, explanation in matching_terms])
             
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""You are an AI language model assistant. Your task is to generate five 
-                different versions of the given user question in {language}.
-                The following terms from the question have specific meanings:
-                {relevant_glossary}
-                Generate questions that incorporate these specific meanings.
-                Provide these alternative questions separated by newlines."""),
+                ("system", f"""You are an AI language model assistant. Your task is to generate five different versions of the given user question in {language} to retrieve relevant documents. The following terms from the question have specific meanings: "
+                 "{relevant_glossary}."
+                 "Generate questions that incorporate these specific meanings. Provide these alternative questions separated by newlines."""),
                 ("human", "{question}")
             ])
 
@@ -536,12 +524,12 @@ def get_multi_query_retriever(base_retriever, llm, language, glossary=None):
 
 
 
-def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3, glossary=None):
+def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3):
     """
     Initializes a HyDE retriever with glossary-aware query generation
     """
     def create_hyde_chain(query):
-        matching_terms = find_glossary_terms(query, glossary) if glossary else []
+        matching_terms = find_glossary_terms_with_explanation(query, language)
         
         if not matching_terms:
             prompt = ChatPromptTemplate.from_messages([
@@ -553,9 +541,8 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3,
                                          for term, explanation in matching_terms])
             
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""Please write a passage in {language} to answer the question.
-                The following terms from the question have specific meanings:
-                {relevant_glossary}"""),
+                ("system", f"""Please write a passage in {language} to answer the question. The following terms from the question have specific meanings: "
+                "{relevant_glossary}"""),
                 ("human", "{question}")
             ])
 
@@ -576,7 +563,7 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3,
     return hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
 
 
-def rerank_docs(query, retrieved_docs, reranker_type, reranking_model):
+def rerank_docs(query, retrieved_docs, reranker_type, language: str):
     """
     Rerank the provided context chunks
 
@@ -596,7 +583,11 @@ def rerank_docs(query, retrieved_docs, reranker_type, reranking_model):
     elif reranker_type=="german":
         ranked_docs = reranking_german(retrieved_docs, query)
     elif reranker_type=="cohere":
-        ranked_docs = reranking_cohere(retrieved_docs, query, reranking_model)
+        if (language.lower() == "english"):
+            model = os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
+        else:
+            model = os.getenv("GERMAN_COHERE_RERANKING_MODEL")
+        ranked_docs = reranking_cohere(retrieved_docs, query, model)
     elif reranker_type=="colbert":
         ranked_docs = reranking_colbert(retrieved_docs, query)
     else: # just return the original order
@@ -605,7 +596,7 @@ def rerank_docs(query, retrieved_docs, reranker_type, reranking_model):
     return ranked_docs
 
 
-async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str, reranking_model: str):
+async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str, language: str):
     """
     Versión asíncrona de rerank_docs que permite ejecución paralela.
     """
@@ -613,7 +604,7 @@ async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str
         loop = asyncio.get_event_loop()
         ranked_docs = await loop.run_in_executor(
             executor,
-            lambda: rerank_docs(query, retrieved_docs, reranker_type, reranking_model)
+            lambda: rerank_docs(query, retrieved_docs, reranker_type, language)
         )
     return ranked_docs
 
@@ -655,11 +646,7 @@ async def getStepBackQuery(
     prompt = ChatPromptTemplate.from_messages([
         (
             "system",
-            """You are an expert at world knowledge.
-            Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer.
-            Please note that the question has been asked in the context of the University of Graz.
-            Give the generic step-back question in {language}.
-            Here are a few examples:""",
+            """You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. Please note that the question has been asked in the context of the University of Graz. Give the generic step-back question in {language}. Here are a few examples:""",
         ),
         few_shot_prompt,
         ("user", "{question}"),
@@ -671,9 +658,30 @@ async def getStepBackQuery(
     # Get the step-back query
     step_back_query = await chain.ainvoke({"language": language, "question": query})
 
-    print(f"step_back_query: {step_back_query}")
+    # print(f"step_back_query: {step_back_query}")
     
     return step_back_query
+
+
+async def translate_query(query: str, language: str, target_language: str, llm: Any) -> str:
+    from langchain_core.output_parsers import StrOutputParser
+    
+    matching_terms = find_glossary_terms(query, language)
+        
+    if not matching_terms:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", f"Translate the following text to {target_language}. Only provide the translation, no explanations."),
+            ("human", "{query}")
+        ])
+    else:        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", f"Translate the following text to {target_language}. Only provide the translation, no explanations. If these terms {matching_terms} appear in the text to be translated, do not translate them but use them as they are written."),
+            ("human", "{query}")
+        ])
+      
+    chain = prompt | llm | StrOutputParser()
+    translated_query = await chain.ainvoke({"query": query})
+    return translated_query
 
 
 @traceable # Auto-trace this function
@@ -693,51 +701,84 @@ async def process_queries_and_combine_results(
     Args:
         query: Original user query
         llm: Azure OpenAI LLM instance
-        retriever1: First retriever instance
-        retriever2: Second retriever instance
-        reranker_type_1: Type of first reranker
-        reranker_type_2: Type of second reranker
+        retriever_de: First retriever instance, in german
+        retriever_en: Second retriever instance, in english
+        reranker_type_de: Type of first reranker, in german
+        reranker_type_en: Type of second reranker, in english
         chat_history: List of chat history tuples
         language: Query language
     
     Returns:
         List[Document]: Combined and sorted list of retrieved documents
     """
-    # Get step-back query
-    step_back_query = await getStepBackQuery(query, llm, language)
+    # Determinar queries según el idioma
+    if (language.lower() == "german"):
+        query_de = query
+        query_en = await translate_query(query, language, "english", llm)
+    else:
+        query_de = await translate_query(query, language, "german", llm)
+        query_en = query
     
+    # Get step-back query
+    step_back_query_de = await getStepBackQuery(query_de, llm, "german")
+    step_back_query_en = await getStepBackQuery(query_en, llm, "english")
+    
+    # print(f"query_de: {query_de}")
+    # print(f"step_back_query_de: {step_back_query_de}")
+    # print(f"query_en: {query_en}")
+    # print(f"step_back_query: {step_back_query_en}")
+
     # Process both queries in parallel
     retrieval_tasks = [
         retrieve_context_reranked(
-            query,
+            query_de,
             retriever_de,
-            retriever_en,
             reranker_type_de,
-            reranker_type_en,
-            chat_history
+            chat_history,
+            "german"
         ),
         retrieve_context_reranked(
-            step_back_query,
+            step_back_query_de,
             retriever_de,
-            retriever_en,
             reranker_type_de,
+            chat_history,
+            "german"
+        ),
+        retrieve_context_reranked(
+            query_en,
+            retriever_en,
             reranker_type_en,
-            chat_history
+            chat_history,
+            "english"
+        ),
+        retrieve_context_reranked(
+            step_back_query_en,
+            retriever_en,
+            reranker_type_en,
+            chat_history,
+            "english"
         )
     ]
     
-    # Wait for both retrievals to complete
-    context_original, context_step_back = await asyncio.gather(*retrieval_tasks)
+    # Wait for all retrievals to complete
+    results = await asyncio.gather(*retrieval_tasks)
+    reranked_docs_original_de, reranked_docs_step_back_de, reranked_docs_original_en, reranked_docs_step_back_en = results
     
     # Combine and sort results
-    all_docs = context_original + context_step_back
-    
+    all_reranked_docs = reranked_docs_original_de + reranked_docs_step_back_de + reranked_docs_original_en + reranked_docs_step_back_en
+        
+    if not all_reranked_docs:
+        print(
+            f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. "
+            "Versuche, deine Frage zu ändern!"
+        )
+        return []
+
     # Remove duplicates based on content and source
     seen = set()
     unique_docs = []
     
-    for doc in all_docs:
-        # Create a unique identifier for the document
+    for doc in all_reranked_docs:
         doc_id = (doc.page_content, doc.metadata.get('source'))
         if doc_id not in seen:
             seen.add(doc_id)
@@ -756,11 +797,10 @@ async def process_queries_and_combine_results(
 @traceable # Auto-trace this function
 async def retrieve_context_reranked(
     query: str,
-    retriever_de,
-    retriever_en,
-    reranker_type_1: str,
-    reranker_type_2: str,
-    chat_history=[]
+    retriever,
+    reranker: str,
+    chat_history=[],
+    language: str = "german"
 ):
     """
     Versión asíncrona mejorada que ejecuta las recuperaciones y reranking en paralelo,
@@ -776,63 +816,27 @@ async def retrieve_context_reranked(
             ])
         
         # 1. Preparar los argumentos para ambos retrievers
-        retrieval_args_de = {
+        retrieval_args = {
             "input": query,
             "chat_history": formatted_history,
-            "language": "german"
-        }
-        retrieval_args_en = {
-            "input": query,
-            "chat_history": formatted_history,
-            "language": "english"
+            "language": language
         }
         
         # 2. Ejecutar ambas recuperaciones en paralelo usando ainvoke
-        retrieval_tasks = [
-            retriever_de.ainvoke(retrieval_args_de),
-            retriever_en.ainvoke(retrieval_args_en)
-        ]
-        retrieved_docs_1, retrieved_docs_2 = await asyncio.gather(*retrieval_tasks)
+        retrieved_docs = await retriever.ainvoke(retrieval_args)
         
-        # Verificar si se encontraron documentos
-        if not (retrieved_docs_1 or retrieved_docs_2):
-            print(
-                f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. "
-                "Versuche, deine Frage zu ändern!"
-            )
-            return []
-
-        # 3. Ejecutar ambos reranking en paralelo
-        reranking_tasks = [
-            rerank_docs_async(
-                query,
-                retrieved_docs_1,
-                reranker_type_1,
-                os.getenv("GERMAN_COHERE_RERANKING_MODEL")
-            ),
-            rerank_docs_async(
-                query,
-                retrieved_docs_2,
-                reranker_type_2,
-                os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
-            )
-        ]
-        reranked_docs_1, reranked_docs_2 = await asyncio.gather(*reranking_tasks)
-
-        # 4. Combinar y ordenar los resultados
-        all_reranked_docs = reranked_docs_1 + reranked_docs_2
-        
-        # Ordenar todos los documentos por su reranking_score
-        sorted_docs = sorted(
-            all_reranked_docs,
-            key=lambda x: x.metadata.get('reranking_score', 0),
-            reverse=True  # Higher scores first
+        # 3. Ejecutar reranking en paralelo
+        reranked_docs = await rerank_docs_async(
+            query,
+            retrieved_docs,
+            reranker,
+            language
         )
-        
-        if not sorted_docs:
+           
+        if not reranked_docs:
             print("Die re-rankteten Dokumente sind 0.")
             
-        return sorted_docs
+        return reranked_docs
     
     except Exception as e:
         print(f"Error en retrieve_context_reranked: {str(e)}")
