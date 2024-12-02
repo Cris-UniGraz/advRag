@@ -502,8 +502,8 @@ def get_multi_query_retriever(base_retriever, llm, language):
             
             prompt = ChatPromptTemplate.from_messages([
                 ("system", f"""You are an AI language model assistant. Your task is to generate five different versions of the given user question in {language} to retrieve relevant documents. The following terms from the question have specific meanings: "
-                 "{relevant_glossary}."
-                 "Generate questions that incorporate these specific meanings. Provide these alternative questions separated by newlines."""),
+                "{relevant_glossary}."
+                "Generate questions that incorporate these specific meanings. Provide these alternative questions separated by newlines."""),
                 ("human", "{question}")
             ])
 
@@ -610,15 +610,16 @@ async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str
 
 async def getStepBackQuery(
     query: str,
-    llm: Any,  # Azure OpenAI LLM
+    llm: Any,
     language: str = "german"
 ) -> str:
     """
-    Generate a more generic step-back query from the original query.
+    Generate a more generic step-back query from the original query, considering glossary terms.
     
     Args:
         query: Original user query
         llm: Azure OpenAI LLM instance
+        language: Target language for the response
     Returns:
         str: Generated step-back query
     """
@@ -643,24 +644,38 @@ async def getStepBackQuery(
         examples=examples,
     )
 
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. Please note that the question has been asked in the context of the University of Graz. Give the generic step-back question in {language}. Here are a few examples:""",
-        ),
-        few_shot_prompt,
-        ("user", "{question}"),
-    ])
+    # Buscar términos del glosario en la query
+    matching_terms = find_glossary_terms_with_explanation(query, language)
 
-    # Create the chain using the Azure OpenAI LLM
+    if not matching_terms:
+        prompt = ChatPromptTemplate.from_messages([
+            (
+                "system",
+                """You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. Please note that the question has been asked in the context of the University of Graz. Give the generic step-back question in {language}. Here are a few examples:""",
+            ),
+            few_shot_prompt,
+            ("user", "{question}"),
+        ])
+    else:
+        relevant_glossary = "\n".join([f"{term}: {explanation}" 
+                                     for term, explanation in matching_terms])
+        
+        prompt = ChatPromptTemplate.from_messages([
+            (
+                "system",
+                f"""You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. The following terms from the question have specific meanings:
+                {relevant_glossary}
+                Please consider these specific meanings when generating the step-back question. Please note that the question has been asked in the context of the University of Graz. Give the generic step-back question in {language}. Here are a few examples:""",
+            ),
+            few_shot_prompt,
+            ("user", "{question}"),
+        ])
+
     chain = prompt | llm | StrOutputParser()
-    
-    # Get the step-back query
     step_back_query = await chain.ainvoke({"language": language, "question": query})
-
-    # print(f"step_back_query: {step_back_query}")
     
     return step_back_query
+
 
 
 async def translate_query(query: str, language: str, target_language: str, llm: Any) -> str:
