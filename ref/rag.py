@@ -491,6 +491,9 @@ def get_multi_query_retriever(base_retriever, llm, language):
     def create_multi_query_chain(query):
         matching_terms = find_glossary_terms_with_explanation(query, language)
         
+        #if language == "english":
+        #    print(f">> get_multi_query_retriever > query = {query} - language = {language} - matching_terms = {matching_terms}.")
+
         if not matching_terms:
             prompt = ChatPromptTemplate.from_messages([
                 ("system", f"""You are an AI language model assistant. Your task is to generate five different versions of the given user question in {language} to retrieve relevant documents. By generating multiple perspectives on the user question, your goal is to help overcome some limitations of distance-based similarity search. Provide these alternative questions separated by newlines."""),
@@ -501,9 +504,7 @@ def get_multi_query_retriever(base_retriever, llm, language):
                                          for term, explanation in matching_terms])
             
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""You are an AI language model assistant. Your task is to generate five different versions of the given user question in {language} to retrieve relevant documents. The following terms from the question have specific meanings: "
-                "{relevant_glossary}."
-                "Generate questions that incorporate these specific meanings. Provide these alternative questions separated by newlines."""),
+                ("system", f"""You are an AI language model assistant. Your task is to generate five different versions of the given user question in {language} to retrieve relevant documents. The following terms from the question have specific meanings: {relevant_glossary}. Generate questions that incorporate these specific meanings. Provide these alternative questions separated by newlines."""),
                 ("human", "{question}")
             ])
 
@@ -541,10 +542,12 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
                                          for term, explanation in matching_terms])
             
             prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""Please write a passage in {language} to answer the question. The following terms from the question have specific meanings: "
-                "{relevant_glossary}"""),
+                ("system", f"""Please write a passage in {language} to answer the question. The following terms from the question have specific meanings: {relevant_glossary}"""),
                 ("human", "{question}")
             ])
+            
+        #if language == "english":
+        #    print(f">> get_hyde_retriever > query = {query} - language = {language} - prompt = {prompt}.")
 
         chain = prompt | llm | StrOutputParser()
         return chain
