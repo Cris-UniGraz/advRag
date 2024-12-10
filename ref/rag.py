@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Tuple
 from rag2.loaders import load_documents
 
 from glossary import find_glossary_terms, find_glossary_terms_with_explanation, get_glossary  # Importa el método get_glossary
-
+from coroutine_manager import coroutine_manager
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -587,23 +587,28 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
     return hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
 
 
+@coroutine_manager.coroutine_handler(timeout=30)
 async def rerank_docs(query, retrieved_docs, reranker_type, language: str):
-    if reranker_type=="gpt":
-        ranked_docs = await reranking_gpt(retrieved_docs, query)
-    elif reranker_type=="german":
-        ranked_docs = await reranking_german(retrieved_docs, query)
-    elif reranker_type=="cohere":
-        if (language.lower() == "english"):
-            model = os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
+    try:
+        if reranker_type=="gpt":
+            ranked_docs = await reranking_gpt(retrieved_docs, query)
+        elif reranker_type=="german":
+            ranked_docs = await reranking_german(retrieved_docs, query)
+        elif reranker_type=="cohere":
+            model = os.getenv("ENGLISH_COHERE_RERANKING_MODEL") if language.lower() == "english" else os.getenv("GERMAN_COHERE_RERANKING_MODEL")
+            ranked_docs = await reranking_cohere(retrieved_docs, query, model)
+        elif reranker_type=="colbert":
+            ranked_docs = await reranking_colbert(retrieved_docs, query)
         else:
-            model = os.getenv("GERMAN_COHERE_RERANKING_MODEL")
-        ranked_docs = await reranking_cohere(retrieved_docs, query, model)
-    elif reranker_type=="colbert":
-        ranked_docs = await reranking_colbert(retrieved_docs, query)
-    else:
-        ranked_docs = [(query, r.page_content) for r in retrieved_docs]
+            ranked_docs = [(query, r.page_content) for r in retrieved_docs]
+        return ranked_docs
+    except asyncio.TimeoutError:
+        print("Reranking operation timed out")
+        return retrieved_docs
+    except Exception as e:
+        print(f"Error during reranking: {e}")
+        return retrieved_docs
 
-    return ranked_docs
 
 
 
@@ -711,6 +716,7 @@ async def translate_query(query: str, language: str, target_language: str, llm: 
 
 
 @traceable
+@coroutine_manager.coroutine_handler(timeout=60)
 async def process_queries_and_combine_results(
     query: str,
     llm: Any,
@@ -721,58 +727,71 @@ async def process_queries_and_combine_results(
     chat_history: List[Tuple[str, str]] = [],
     language: str = "german"
 ) -> List[Document]:
-    # Determinar queries según el idioma
-    if (language.lower() == "german"):
-        query_de = query
-        query_en = await translate_query(query, language, "english", llm)
-    else:
-        query_de = await translate_query(query, language, "german", llm)
-        query_en = query
-    
-    # Get step-back query
-    step_back_query_de = await getStepBackQuery(query_de, llm, "german")
-    step_back_query_en = await getStepBackQuery(query_en, llm, "english")
-    
-    # Process both queries in parallel
-    retrieval_tasks = [
-        retrieve_context_reranked(query_de, retriever_de, reranker_type_de, chat_history, "german"),
-        retrieve_context_reranked(step_back_query_de, retriever_de, reranker_type_de, chat_history, "german"),
-        retrieve_context_reranked(query_en, retriever_en, reranker_type_en, chat_history, "english"),
-        retrieve_context_reranked(step_back_query_en, retriever_en, reranker_type_en, chat_history, "english")
-    ]
-    
-    # Esperar a que todas las tareas se completen
-    results = await asyncio.gather(*retrieval_tasks)
-    
-    # Combinar resultados
-    all_reranked_docs = []
-    for result in results:
-        if result:  # Verificar que el resultado no sea None o vacío
-            all_reranked_docs.extend(result)
-    
-    if not all_reranked_docs:
-        print(
-            f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. "
-            "Versuche, deine Frage zu ändern!"
+    try:
+        if (language.lower() == "german"):
+            query_de = query
+            query_en = await coroutine_manager.execute_with_timeout(
+                translate_query(query, language, "english", llm),
+                timeout=10
+            )
+        else:
+            query_de = await coroutine_manager.execute_with_timeout(
+                translate_query(query, language, "german", llm),
+                timeout=10
+            )
+            query_en = query
+        
+        step_back_query_de = await coroutine_manager.execute_with_timeout(
+            getStepBackQuery(query_de, llm, "german"),
+            timeout=10
         )
-        return []
+        step_back_query_en = await coroutine_manager.execute_with_timeout(
+            getStepBackQuery(query_en, llm, "english"),
+            timeout=10
+        )
+        
+        retrieval_tasks = [
+            retrieve_context_reranked(query_de, retriever_de, reranker_type_de, chat_history, "german"),
+            retrieve_context_reranked(step_back_query_de, retriever_de, reranker_type_de, chat_history, "german"),
+            retrieve_context_reranked(query_en, retriever_en, reranker_type_en, chat_history, "english"),
+            retrieve_context_reranked(step_back_query_en, retriever_en, reranker_type_en, chat_history, "english")
+        ]
+        
+        results = await coroutine_manager.gather_coroutines(*retrieval_tasks)
+        
+        all_reranked_docs = []
+        for result in results:
+            if result:
+                all_reranked_docs.extend(result)
+        
+        if not all_reranked_docs:
+            print(f"No relevant documents found for query: {query}")
+            return []
 
-    # Remove duplicates and sort
-    seen = set()
-    unique_docs = []
-    for doc in all_reranked_docs:
-        doc_id = (doc.page_content, doc.metadata.get('source'))
-        if doc_id not in seen:
-            seen.add(doc_id)
-            unique_docs.append(doc)
-    
-    sorted_docs = sorted(
-        unique_docs,
-        key=lambda x: x.metadata.get('reranking_score', 0),
-        reverse=True
-    )
-    
-    return sorted_docs
+        seen = set()
+        unique_docs = []
+        for doc in all_reranked_docs:
+            doc_id = (doc.page_content, doc.metadata.get('source'))
+            if doc_id not in seen:
+                seen.add(doc_id)
+                unique_docs.append(doc)
+        
+        sorted_docs = sorted(
+            unique_docs,
+            key=lambda x: x.metadata.get('reranking_score', 0),
+            reverse=True
+        )
+        
+        return sorted_docs
+    except asyncio.TimeoutError:
+        print("Operation timed out")
+        return []
+    except Exception as e:
+        print(f"Error processing queries: {e}")
+        return []
+    finally:
+        await coroutine_manager.cleanup()
+
 
 
 

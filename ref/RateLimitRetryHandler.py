@@ -2,6 +2,7 @@ import asyncio
 import re
 from typing import Dict, Optional, Callable, Any
 from LLMRequestTracker import LLMRequestTracker
+from coroutine_manager import coroutine_manager
 
 class RateLimitRetryHandler:
     def __init__(self, max_retries: int = 3):
@@ -12,9 +13,10 @@ class RateLimitRetryHandler:
         match = re.search(r'retry after (\d+) second', error_message, re.IGNORECASE)
         return int(match.group(1)) if match else 1
 
+    @coroutine_manager.coroutine_handler()
     async def execute_with_retry(
-        self,
-        operation: Callable,
+        self, 
+        operation: Callable, 
         request_params: Dict[str, Any]
     ) -> Any:
         # Verificar caché primero

@@ -4,6 +4,7 @@ import numpy as np
 from typing import Optional, Dict, Any
 import os
 from dotenv import load_dotenv
+from coroutine_manager import coroutine_manager
 
 class EmbeddingCache:
     def __init__(self):
@@ -33,3 +34,12 @@ class EmbeddingCache:
             self.cache_ttl,
             pickle.dumps(embedding)
         )
+    @coroutine_manager.coroutine_handler()
+    async def aget_embedding(self, text: str, model_name: str) -> Optional[np.ndarray]:
+        key = self._generate_key(text, model_name)
+        cached_embedding = await coroutine_manager.execute_coroutine(
+            self.redis_client.get(key)
+        )
+        if cached_embedding:
+            return pickle.loads(cached_embedding)
+        return None
