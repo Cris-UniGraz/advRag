@@ -67,7 +67,7 @@ def find_glossary_terms_with_explanation(query: str, language: str) -> List[tupl
         if term.lower() in query_lower:
             matches.append((term, explanation))
     
-    # print(f"matches = {matches}")
+    #print(f"matches = {matches}")
 
     return matches
 

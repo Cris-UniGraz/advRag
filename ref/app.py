@@ -93,8 +93,8 @@ async def main(
         query = input(f"{ORANGE}{BOLD}")
         print(f"{RESET}")  # Resetear el formato después de la entrada
         
-        if query == "exit" or query == "cls":
-            break
+        if query.lower() in ["exit", "cls"]:
+                break
         
         # Llamada asincrónica
         context = await process_queries_and_combine_results(

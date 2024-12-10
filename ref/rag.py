@@ -566,37 +566,24 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
     return hyde_vectorstore.as_retriever(search_kwargs={"k": top_k})
 
 
-def rerank_docs(query, retrieved_docs, reranker_type, language: str):
-    """
-    Rerank the provided context chunks
-
-    Parameters:
-    - reranker_type: the model selection.
-    - query: user query - string
-    - retrieved_docs: chunks that needs to be ranked. 
-
-    
-    Returns:
-    - Sorted list of chunks based on their relevance to the query. 
-
-    """
-
+async def rerank_docs(query, retrieved_docs, reranker_type, language: str):
     if reranker_type=="gpt":
-        ranked_docs = reranking_gpt(retrieved_docs, query)
+        ranked_docs = await reranking_gpt(retrieved_docs, query)
     elif reranker_type=="german":
-        ranked_docs = reranking_german(retrieved_docs, query)
+        ranked_docs = await reranking_german(retrieved_docs, query)
     elif reranker_type=="cohere":
         if (language.lower() == "english"):
             model = os.getenv("ENGLISH_COHERE_RERANKING_MODEL")
         else:
             model = os.getenv("GERMAN_COHERE_RERANKING_MODEL")
-        ranked_docs = reranking_cohere(retrieved_docs, query, model)
+        ranked_docs = await reranking_cohere(retrieved_docs, query, model)
     elif reranker_type=="colbert":
-        ranked_docs = reranking_colbert(retrieved_docs, query)
-    else: # just return the original order
+        ranked_docs = await reranking_colbert(retrieved_docs, query)
+    else:
         ranked_docs = [(query, r.page_content) for r in retrieved_docs]
 
     return ranked_docs
+
 
 
 async def rerank_docs_async(query: str, retrieved_docs: List, reranker_type: str, language: str):
@@ -702,7 +689,7 @@ async def translate_query(query: str, language: str, target_language: str, llm: 
     return translated_query
 
 
-@traceable # Auto-trace this function
+@traceable
 async def process_queries_and_combine_results(
     query: str,
     llm: Any,
@@ -713,22 +700,6 @@ async def process_queries_and_combine_results(
     chat_history: List[Tuple[str, str]] = [],
     language: str = "german"
 ) -> List[Document]:
-    """
-    Process both original and step-back queries in parallel and combine their results.
-    
-    Args:
-        query: Original user query
-        llm: Azure OpenAI LLM instance
-        retriever_de: First retriever instance, in german
-        retriever_en: Second retriever instance, in english
-        reranker_type_de: Type of first reranker, in german
-        reranker_type_en: Type of second reranker, in english
-        chat_history: List of chat history tuples
-        language: Query language
-    
-    Returns:
-        List[Document]: Combined and sorted list of retrieved documents
-    """
     # Determinar queries según el idioma
     if (language.lower() == "german"):
         query_de = query
@@ -741,50 +712,23 @@ async def process_queries_and_combine_results(
     step_back_query_de = await getStepBackQuery(query_de, llm, "german")
     step_back_query_en = await getStepBackQuery(query_en, llm, "english")
     
-    # print(f"query_de: {query_de}")
-    # print(f"step_back_query_de: {step_back_query_de}")
-    # print(f"query_en: {query_en}")
-    # print(f"step_back_query: {step_back_query_en}")
-
     # Process both queries in parallel
     retrieval_tasks = [
-        retrieve_context_reranked(
-            query_de,
-            retriever_de,
-            reranker_type_de,
-            chat_history,
-            "german"
-        ),
-        retrieve_context_reranked(
-            step_back_query_de,
-            retriever_de,
-            reranker_type_de,
-            chat_history,
-            "german"
-        ),
-        retrieve_context_reranked(
-            query_en,
-            retriever_en,
-            reranker_type_en,
-            chat_history,
-            "english"
-        ),
-        retrieve_context_reranked(
-            step_back_query_en,
-            retriever_en,
-            reranker_type_en,
-            chat_history,
-            "english"
-        )
+        retrieve_context_reranked(query_de, retriever_de, reranker_type_de, chat_history, "german"),
+        retrieve_context_reranked(step_back_query_de, retriever_de, reranker_type_de, chat_history, "german"),
+        retrieve_context_reranked(query_en, retriever_en, reranker_type_en, chat_history, "english"),
+        retrieve_context_reranked(step_back_query_en, retriever_en, reranker_type_en, chat_history, "english")
     ]
     
-    # Wait for all retrievals to complete
+    # Esperar a que todas las tareas se completen
     results = await asyncio.gather(*retrieval_tasks)
-    reranked_docs_original_de, reranked_docs_step_back_de, reranked_docs_original_en, reranked_docs_step_back_en = results
     
-    # Combine and sort results
-    all_reranked_docs = reranked_docs_original_de + reranked_docs_step_back_de + reranked_docs_original_en + reranked_docs_step_back_en
-        
+    # Combinar resultados
+    all_reranked_docs = []
+    for result in results:
+        if result:  # Verificar que el resultado no sea None o vacío
+            all_reranked_docs.extend(result)
+    
     if not all_reranked_docs:
         print(
             f"Es konnte kein relevantes Dokument mit der Abfrage `{query}` gefunden werden. "
@@ -792,17 +736,15 @@ async def process_queries_and_combine_results(
         )
         return []
 
-    # Remove duplicates based on content and source
+    # Remove duplicates and sort
     seen = set()
     unique_docs = []
-    
     for doc in all_reranked_docs:
         doc_id = (doc.page_content, doc.metadata.get('source'))
         if doc_id not in seen:
             seen.add(doc_id)
             unique_docs.append(doc)
     
-    # Sort by reranking score
     sorted_docs = sorted(
         unique_docs,
         key=lambda x: x.metadata.get('reranking_score', 0),
@@ -812,18 +754,9 @@ async def process_queries_and_combine_results(
     return sorted_docs
 
 
+
 @traceable # Auto-trace this function
-async def retrieve_context_reranked(
-    query: str,
-    retriever,
-    reranker: str,
-    chat_history=[],
-    language: str = "german"
-):
-    """
-    Versión asíncrona mejorada que ejecuta las recuperaciones y reranking en paralelo,
-    aprovechando ainvoke para búsquedas verdaderamente asíncronas.
-    """
+async def retrieve_context_reranked(query, retriever, reranker, chat_history=[], language="german"):
     try:
         # Convertir el historial de chat al formato esperado
         formatted_history = []
@@ -833,32 +766,22 @@ async def retrieve_context_reranked(
                 AIMessage(content=ai_msg)
             ])
         
-        # 1. Preparar los argumentos para ambos retrievers
-        retrieval_args = {
+        # Ejecutar la recuperación
+        retrieved_docs = await retriever.ainvoke({
             "input": query,
             "chat_history": formatted_history,
             "language": language
-        }
+        })
         
-        # 2. Ejecutar ambas recuperaciones en paralelo usando ainvoke
-        retrieved_docs = await retriever.ainvoke(retrieval_args)
+        # Ejecutar el reranking y esperar su resultado
+        reranked_docs = await rerank_docs(query, retrieved_docs, reranker, language)
         
-        # 3. Ejecutar reranking en paralelo
-        reranked_docs = await rerank_docs_async(
-            query,
-            retrieved_docs,
-            reranker,
-            language
-        )
-           
-        if not reranked_docs:
-            print("Die re-rankteten Dokumente sind 0.")
-            
         return reranked_docs
     
     except Exception as e:
         print(f"Error en retrieve_context_reranked: {str(e)}")
         return []
+
 
 
 @traceable # Auto-trace this function

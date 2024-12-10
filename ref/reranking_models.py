@@ -1,6 +1,7 @@
 from transformers import AutoTokenizer, AutoModel
 #from openai import OpenAI
 from openai import AzureOpenAI
+import asyncio
 import torch
 import time
 import json
@@ -73,32 +74,63 @@ def reranking_gpt(similar_chunks, query):
     return reranked_documents
 
 
-def reranking_german(similar_chunks, query):
+async def reranking_gpt(similar_chunks, query):
+    start = time.time()
+    client = AzureOpenAI(
+        api_key=os.getenv("AZURE_OPENAI_API_KEY"),  
+        api_version="2023-05-15",
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+    )
+    
+    response = await client.chat.completions.create(
+        model=AZURE_OPENAI_MODEL,
+        response_format={"type": "json_object"},
+        temperature=0,
+        messages=[
+            {"role": "system", 
+             "content": """Du bist ein Experte für Relevanzbewertung. Anhand einer Liste von Dokumenten und einer Abfrage musst du bestimmen, wie relevant jedes Dokument für die Beantwortung der Abfrage ist. 
+             Deine Ausgabe ist JSON, d.h. eine Liste von Dokumenten. Jedes Dokument hat zwei Felder: Inhalt und Punktzahl. relevance_score liegt zwischen 0,0 und 100,0. Höhere Relevanz bedeutet höhere Punktzahl"""},
+            {"role": "user", "content": f"Query: {query} Docs: {[doc.page_content for doc in similar_chunks]}"}
+        ]
+    )
+
+    print("Es dauerte {:.2f} Sekunden, um Dokumente mit {} zu re-ranken.".format(time.time() - start, AZURE_OPENAI_MODEL))
+
+    scores = json.loads(response.choices[0].message.content)["documents"]
+    sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
+
+    reranked_documents = [
+        Document(page_content=r['content'], metadata={**similar_chunks[i].metadata, "reranking_score": r['score']})
+        for i, r in enumerate(sorted_data)
+    ]
+    
+    return reranked_documents
+
+async def reranking_german(similar_chunks, query):
     start = time.time()
     scores = []
-    # Load the tokenizer and the model
     tokenizer = AutoTokenizer.from_pretrained(GERMAN_RERANKING_MODEL_NAME)
     model = AutoModel.from_pretrained(GERMAN_RERANKING_MODEL_NAME)
-    # Encode the query
+    
     query_encoding = tokenizer(query, return_tensors='pt')
     query_embedding = model(**query_encoding).last_hidden_state.mean(dim=1)
-    # Get score for each document
-    for document in similar_chunks:
+    
+    async def process_document(document):
         document_encoding = tokenizer(document.page_content, return_tensors='pt', truncation=True, max_length=512)
         document_embedding = model(**document_encoding).last_hidden_state
-        # Calculate MaxSim score
         score = maxsim(query_embedding.unsqueeze(0), document_embedding)
-        scores.append({
+        return {
             "score": score.item(),
             "document": document,
-        })
+        }
+    
+    tasks = [process_document(doc) for doc in similar_chunks]
+    scores = await asyncio.gather(*tasks)
     
     print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}{GERMAN_RERANKING_MODEL_NAME}{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
-    # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
-    # Create a list of Document objects with score included in metadata
     reranked_documents = [
         Document(
             page_content=r['document'].page_content, 
@@ -109,32 +141,31 @@ def reranking_german(similar_chunks, query):
     
     return reranked_documents
 
-def reranking_colbert(similar_chunks, query):
+async def reranking_colbert(similar_chunks, query):
     start = time.time()
     scores = []
-    # Load the tokenizer and the model
     tokenizer = AutoTokenizer.from_pretrained("colbert-ir/colbertv2.0")
     model = AutoModel.from_pretrained("colbert-ir/colbertv2.0")
-    # Encode the query
+    
     query_encoding = tokenizer(query, return_tensors='pt')
     query_embedding = model(**query_encoding).last_hidden_state.mean(dim=1)
-    # Get score for each document
-    for document in similar_chunks:
+    
+    async def process_document(document):
         document_encoding = tokenizer(document.page_content, return_tensors='pt', truncation=True, max_length=512)
         document_embedding = model(**document_encoding).last_hidden_state
-        # Calculate MaxSim score
         score = maxsim(query_embedding.unsqueeze(0), document_embedding)
-        scores.append({
+        return {
             "score": score.item(),
             "document": document,
-        })
+        }
     
-    print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}{GERMAN_RERANKING_MODEL_NAME}{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
+    tasks = [process_document(doc) for doc in similar_chunks]
+    scores = await asyncio.gather(*tasks)
+    
+    print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}ColBERT{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
 
-    # Sort the scores by highest to lowest
     sorted_data = sorted(scores, key=lambda x: x['score'], reverse=True)
     
-    # Create a list of Document objects with score included in metadata
     reranked_documents = [
         Document(
             page_content=r['document'].page_content, 
@@ -145,19 +176,21 @@ def reranking_colbert(similar_chunks, query):
     
     return reranked_documents
 
-
-def reranking_cohere(similar_chunks, query, model):
+async def reranking_cohere(similar_chunks, query, model):
     co = cohere.Client(os.environ["COHERE_API_KEY"])
-
     documents = [doc.page_content for doc in similar_chunks]
     start = time.time()
 
-    results = co.rerank(query=query, 
-                        documents=documents, 
-                        model=model, 
-                        return_documents=True)
-
-    # print(f"{BLUE}{BOLD}Es dauerte {RESET}{GREEN}{BOLD}{time.time() - start:.2f} Sekunden{RESET}{BLUE}{BOLD}, um Dokumente mit {RESET}{GREEN}{BOLD}Cohere{RESET}{BLUE}{BOLD} zu re-ranken.{RESET}")
+    loop = asyncio.get_event_loop()
+    results = await loop.run_in_executor(
+        None, 
+        lambda: co.rerank(
+            query=query, 
+            documents=documents, 
+            model=model, 
+            return_documents=True
+        )
+    )
 
     reranked_documents = [
         Document(
@@ -171,5 +204,6 @@ def reranking_cohere(similar_chunks, query, model):
     ]
 
     return reranked_documents
+
 
 
