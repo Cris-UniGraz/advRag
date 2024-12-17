@@ -62,6 +62,19 @@ os.environ['LANGCHAIN_TRACING_V2'] = os.getenv("LANGCHAIN_TRACING_V2")
 os.environ['LANGCHAIN_API_KEY'] = os.getenv("LANGCHAIN_API_KEY")
 os.environ['LANGCHAIN_PROJECT'] = os.getenv("LANGCHAIN_PROJECT")
 
+GERMAN_EMBEDDING_MODEL = None
+ENGLISH_EMBEDDING_MODEL = None
+
+def initialize_embedding_models():
+    global GERMAN_EMBEDDING_MODEL, ENGLISH_EMBEDDING_MODEL
+    
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_german = executor.submit(load_embedding_model, model_name=GERMAN_EMBEDDING_MODEL_NAME)
+        future_english = executor.submit(load_embedding_model, model_name=ENGLISH_EMBEDDING_MODEL_NAME)
+        
+        GERMAN_EMBEDDING_MODEL = future_german.result()
+        ENGLISH_EMBEDDING_MODEL = future_english.result()
+
 def split_documents(documents, split_size, split_overlap):
     # Dividir documentos en tamaño DOC_SIZE
     doc_splitter = RecursiveCharacterTextSplitter(
@@ -609,7 +622,7 @@ async def rerank_docs(query, retrieved_docs, reranker_type, language: str):
         elif reranker_type=="colbert":
             ranked_docs = await reranking_colbert(retrieved_docs, query)
         else:
-            ranked_docs = [(query, r.page_content) for r in retrieved_docs]
+            ranked_docs = [doc for doc in retrieved_docs]
         return ranked_docs
     except asyncio.TimeoutError:
         print("Reranking operation timed out")
@@ -754,64 +767,73 @@ async def process_queries_and_combine_results(
     query_optimizer = QueryOptimizer()
     
     try:
-        # Cargar los modelos de embedding
-        german_embedding_model = load_embedding_model(model_name=GERMAN_EMBEDDING_MODEL_NAME)
-        english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
-        
         # Optimizar la consulta principal usando el modelo correspondiente
-        embedding_model = german_embedding_model if language.lower() == "german" else english_embedding_model
+        embedding_model = GERMAN_EMBEDDING_MODEL if language.lower() == "german" else ENGLISH_EMBEDDING_MODEL
         optimized_query = await query_optimizer.optimize_query(
             query,
             language,
             embedding_model
         )
         
+        # Cuando se procesa el resultado del optimizador
         if optimized_query['source'] == 'cache':
+            # Convertir el resultado cacheado a Document si es necesario
+            if isinstance(optimized_query['result'], str):
+                return [Document(page_content=optimized_query['result'])]
             return optimized_query['result']
             
         # Procesar consultas en el idioma correspondiente
         if language.lower() == "german":
             query_de = query
-            query_en = await translate_query(query, language, "english", llm)
-            
-            optimized_query_de = await query_optimizer.optimize_query(
-                query_de,
-                "german",
-                german_embedding_model
-            )
-            
-            optimized_query_en = await query_optimizer.optimize_query(
-                query_en,
-                "english",
-                english_embedding_model
-            )
+            # Ejecutar todas las operaciones de traducción y step-back en paralelo
+            all_query_tasks = [
+                translate_query(query, language, "english", llm),
+                getStepBackQuery(query_de, llm, language),
+                getStepBackQuery(query, llm, "english")
+            ]
+            all_results = await coroutine_manager.gather_coroutines(*all_query_tasks)
+            query_en = all_results[0]
+            step_back_query_de = all_results[1]
+            step_back_query_en = all_results[2]
+
         else:
-            query_de = await translate_query(query, language, "german", llm)
             query_en = query
-            
-            optimized_query_de = await query_optimizer.optimize_query(
-                query_de,
-                "german",
-                german_embedding_model
-            )
-            
-            optimized_query_en = await query_optimizer.optimize_query(
-                query_en,
-                "english",
-                english_embedding_model
-            )
-        
+            # Ejecutar todas las operaciones de traducción y step-back en paralelo
+            all_query_tasks = [
+                translate_query(query, language, "german", llm),
+                getStepBackQuery(query_en, llm, language),
+                getStepBackQuery(query, llm, "german")
+            ]
+            all_results = await coroutine_manager.gather_coroutines(*all_query_tasks)
+            query_de = all_results[0]
+            step_back_query_en = all_results[1]
+            step_back_query_de = all_results[2]
+                
         # Continuar con el proceso de recuperación y reranking
         retrieval_tasks = [
             retrieve_context_reranked(
-                optimized_query_de['result']['original_query'], 
+                query_de, 
                 retriever_de, 
                 reranker_type_de, 
                 chat_history, 
                 "german"
             ),
             retrieve_context_reranked(
-                optimized_query_en['result']['original_query'], 
+                query_en, 
+                retriever_en, 
+                reranker_type_en, 
+                chat_history, 
+                "english"
+            ),
+            retrieve_context_reranked(
+                step_back_query_de, 
+                retriever_de, 
+                reranker_type_de, 
+                chat_history, 
+                "german"
+            ),
+            retrieve_context_reranked(
+                step_back_query_en,
                 retriever_en, 
                 reranker_type_en, 
                 chat_history, 
@@ -824,7 +846,15 @@ async def process_queries_and_combine_results(
         all_reranked_docs = []
         for result in results:
             if result:
-                all_reranked_docs.extend(result)
+                for document in result:
+                    if not isinstance(document, Document):
+                        continue
+                    if not hasattr(document, 'metadata') or document.metadata is None:
+                        document.metadata = {}
+                    # if 'metadata' not in document or not document.metadata:
+                        # document.metadata = {}
+                    all_reranked_docs.append(document)
+
         
         if not all_reranked_docs:
             print(f"No relevant documents found for query: {query}")

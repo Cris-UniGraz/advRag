@@ -13,10 +13,12 @@ from rag import (
     azure_openai_call,
     get_ensemble_retriever,
     process_queries_and_combine_results,
+    initialize_embedding_models
 )
 
 # Inicializar el optimizador de consultas
 query_optimizer = QueryOptimizer()
+initialize_embedding_models()
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -133,12 +135,13 @@ async def main(
             sources = []
             filtered_context = []
             for document in context:
+                validated_doc = query_optimizer._validate_document(document)
                 if len(filtered_context) <= MAX_CHUNKS_LLM: #and document.metadata.get('reranking_score', 0) > MIN_RERANKING_SCORE:
                     text += "\n" + document.page_content
-                    source = f"{os.path.basename(document.metadata['source'])} (Seite {document.metadata.get('page', 'N/A')})"
+                    source = f"{os.path.basename(document.metadata.get('source', 'Unknown'))} (Seite {document.metadata.get('page', 'N/A')})"
                     if source not in sources:
                         sources.append(source)
-                    filtered_context.append(document)
+                    filtered_context.append(validated_doc)
 
             # Imprimir "LLM-Antwort:" en azul negrita
             print(f"{BLUE}{BOLD}\n>> LLM-Antwort: {RESET}", end="")
@@ -162,7 +165,7 @@ async def main(
                 print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
                 unique_sources = {}
                 for document in filtered_context:
-                    source = os.path.basename(document.metadata['source'])
+                    source = os.path.basename(document.metadata.get('source', 'Unknown Source'))
                     if document.metadata['source'].lower().endswith('.xlsx'):
                         sheet = document.metadata.get('sheet_name', 'Unbekannt')
                         key = (source, sheet)
