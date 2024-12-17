@@ -1,44 +1,46 @@
 import asyncio
-import re
+import logging
+from datetime import datetime
 from typing import Dict, Optional, Callable, Any
-from LLMRequestTracker import LLMRequestTracker
+from metrics_manager import MetricsManager
+from llm_cache_manager import LLMCacheManager
 from coroutine_manager import coroutine_manager
+from rate_limit_manager import RateLimitManager
 
 class RateLimitRetryHandler:
-    def __init__(self, max_retries: int = 3):
-        self.max_retries = max_retries
-        self.request_tracker = LLMRequestTracker()
-
-    def _extract_retry_time(self, error_message: str) -> int:
-        match = re.search(r'retry after (\d+) second', error_message, re.IGNORECASE)
-        return int(match.group(1)) if match else 1
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(RateLimitRetryHandler, cls).__new__(cls)
+            cls._instance.max_retries = 3
+            cls._instance.llm_cache = LLMCacheManager()
+            cls._instance.logger = logging.getLogger(__name__)
+            cls._instance.metrics = MetricsManager()
+            cls._instance.rate_limit_manager = RateLimitManager()
+        return cls._instance
 
     @coroutine_manager.coroutine_handler()
     async def execute_with_retry(
         self, 
         operation: Callable, 
-        request_params: Dict[str, Any]
+        request_params: Dict[str, Any],
+        priority: int = 1
     ) -> Any:
-        # Verificar caché primero
-        cached_response = self.request_tracker.get_response(request_params)
-        if cached_response is not None:
-            return cached_response
+        start_time = datetime.now()
+        
+        try:
+            cached_response = self.llm_cache.get_cached_response(request_params, priority)
+            if cached_response is not None:
+                return cached_response
 
-        retries = 0
-        while retries < self.max_retries:
-            try:
-                response = await operation(request_params)
-                # Almacenar en caché y retornar
-                return self.request_tracker.store_response(request_params, response)
-            except Exception as e:
-                error_message = str(e)
-                if "429" in error_message:
-                    retries += 1
-                    if retries >= self.max_retries:
-                        raise Exception(f"Máximo de reintentos alcanzado ({self.max_retries})")
-                    
-                    retry_time = self._extract_retry_time(error_message)
-                    print(f"Rate limit alcanzado. Reintento {retries}/{self.max_retries} después de {retry_time} segundos")
-                    await asyncio.sleep(retry_time)
-                else:
-                    raise
+            response = await self.rate_limit_manager.add_request(operation, request_params)
+            duration = (datetime.now() - start_time).total_seconds()
+            self.metrics.log_operation('api_call', duration, True)
+            return self.llm_cache.cache_response(request_params, response, priority)
+            
+        except Exception as e:
+            duration = (datetime.now() - start_time).total_seconds()
+            self.metrics.log_operation('api_call', duration, False)
+            self.logger.error(f"Error en execute_with_retry: {str(e)}")
+            raise

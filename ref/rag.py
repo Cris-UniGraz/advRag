@@ -33,6 +33,8 @@ from rag2.loaders import load_documents
 
 from glossary import find_glossary_terms, find_glossary_terms_with_explanation, get_glossary  # Importa el método get_glossary
 from coroutine_manager import coroutine_manager
+from query_optimizer import QueryOptimizer
+
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -49,6 +51,9 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 16))
 PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
 PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", 0))
 PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
+
+GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
+ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 
 # LangSmith configuration
 os.environ['LANGCHAIN_TRACING_V2'] = os.getenv("LANGCHAIN_TRACING_V2")
@@ -516,13 +521,13 @@ def get_multi_query_retriever(base_retriever, llm, language):
             self.llm_chain = create_multi_query_chain(query)
             
             # Imprimir el prompt y la respuesta
-            # print("\n=== Multi Query Retriever ===")
-            # print(f"Query original: {query}")
-            # generated_queries = await self.llm_chain.ainvoke({"question": query})
-            # print("=== Multi Query Retriever - Queries generadas: ===")
-            # for q in generated_queries:
-            #     print(f"- {q}")
-            # print("===========================\n")
+            print("\n=== Multi Query Retriever ===")
+            print(f"Query original: {query}")
+            generated_queries = await self.llm_chain.ainvoke({"question": query})
+            print("=== Multi Query Retriever - Queries generadas: ===")
+            for q in generated_queries:
+                print(f"- {q}")
+            print("===========================\n")
             
             return await super()._aget_relevant_documents(query, run_manager=run_manager)
 
@@ -568,12 +573,12 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
             self.llm_chain = create_hyde_chain(query)
             
             # Imprimir el prompt y la respuesta
-            # print("\n=== HyDE Retriever ===")
-            # print(f"Query original: {query}")
-            # hypothetical_doc = self.llm_chain.invoke({"question": query})
-            # print("=== HyDE Retriever - Documento hipotético generado: ===")
-            # print(hypothetical_doc)
-            # print("=====================\n")
+            print("\n=== HyDE Retriever ===")
+            print(f"Query original: {query}")
+            hypothetical_doc = self.llm_chain.invoke({"question": query})
+            print("=== HyDE Retriever - Documento hipotético generado: ===")
+            print(hypothetical_doc)
+            print("=====================\n")
             
             return super().embed_query(query, *args, **kwargs)
 
@@ -727,34 +732,72 @@ async def process_queries_and_combine_results(
     chat_history: List[Tuple[str, str]] = [],
     language: str = "german"
 ) -> List[Document]:
+    query_optimizer = QueryOptimizer()
+    
     try:
-        if (language.lower() == "german"):
+        # Cargar los modelos de embedding
+        german_embedding_model = load_embedding_model(model_name=GERMAN_EMBEDDING_MODEL_NAME)
+        english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
+        
+        # Optimizar la consulta principal usando el modelo correspondiente
+        embedding_model = german_embedding_model if language.lower() == "german" else english_embedding_model
+        optimized_query = await query_optimizer.optimize_query(
+            query,
+            language,
+            embedding_model
+        )
+        
+        if optimized_query['source'] == 'cache':
+            return optimized_query['result']
+            
+        # Procesar consultas en el idioma correspondiente
+        if language.lower() == "german":
             query_de = query
-            query_en = await coroutine_manager.execute_with_timeout(
-                translate_query(query, language, "english", llm),
-                timeout=10
+            query_en = await translate_query(query, language, "english", llm)
+            
+            optimized_query_de = await query_optimizer.optimize_query(
+                query_de,
+                "german",
+                german_embedding_model
+            )
+            
+            optimized_query_en = await query_optimizer.optimize_query(
+                query_en,
+                "english",
+                english_embedding_model
             )
         else:
-            query_de = await coroutine_manager.execute_with_timeout(
-                translate_query(query, language, "german", llm),
-                timeout=10
-            )
+            query_de = await translate_query(query, language, "german", llm)
             query_en = query
+            
+            optimized_query_de = await query_optimizer.optimize_query(
+                query_de,
+                "german",
+                german_embedding_model
+            )
+            
+            optimized_query_en = await query_optimizer.optimize_query(
+                query_en,
+                "english",
+                english_embedding_model
+            )
         
-        step_back_query_de = await coroutine_manager.execute_with_timeout(
-            getStepBackQuery(query_de, llm, "german"),
-            timeout=10
-        )
-        step_back_query_en = await coroutine_manager.execute_with_timeout(
-            getStepBackQuery(query_en, llm, "english"),
-            timeout=10
-        )
-        
+        # Continuar con el proceso de recuperación y reranking
         retrieval_tasks = [
-            retrieve_context_reranked(query_de, retriever_de, reranker_type_de, chat_history, "german"),
-            retrieve_context_reranked(step_back_query_de, retriever_de, reranker_type_de, chat_history, "german"),
-            retrieve_context_reranked(query_en, retriever_en, reranker_type_en, chat_history, "english"),
-            retrieve_context_reranked(step_back_query_en, retriever_en, reranker_type_en, chat_history, "english")
+            retrieve_context_reranked(
+                optimized_query_de['result']['original_query'], 
+                retriever_de, 
+                reranker_type_de, 
+                chat_history, 
+                "german"
+            ),
+            retrieve_context_reranked(
+                optimized_query_en['result']['original_query'], 
+                retriever_en, 
+                reranker_type_en, 
+                chat_history, 
+                "english"
+            )
         ]
         
         results = await coroutine_manager.gather_coroutines(*retrieval_tasks)
@@ -783,14 +826,12 @@ async def process_queries_and_combine_results(
         )
         
         return sorted_docs
-    except asyncio.TimeoutError:
-        print("Operation timed out")
-        return []
     except Exception as e:
         print(f"Error processing queries: {e}")
         return []
     finally:
         await coroutine_manager.cleanup()
+
 
 
 

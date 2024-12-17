@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from coroutine_manager import coroutine_manager
+from query_optimizer import QueryOptimizer
 
 from rag import (
     load_embedding_model,
@@ -12,6 +13,9 @@ from rag import (
     get_ensemble_retriever,
     process_queries_and_combine_results,
 )
+
+# Inicializar el optimizador de consultas
+query_optimizer = QueryOptimizer()
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
@@ -53,21 +57,25 @@ async def main(
         english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
 
         # Ensemble Retrieval
+        # En la función main, ajustar los parámetros de concurrencia
         german_retriever = await get_ensemble_retriever(
             f"{directory}/de",
             german_embedding_model,
             llm,
             collection_name=f"{COLLECTION_NAME}_de",
             top_k=MAX_CHUNKS_CONSIDERED,
-            language="german"
+            language="german",
+            max_concurrency=3  # Reducir la concurrencia
         )
+
         english_retriever = await get_ensemble_retriever(
             f"{directory}/en",
             english_embedding_model,
             llm,
             collection_name=f"{COLLECTION_NAME}_en",
             top_k=MAX_CHUNKS_CONSIDERED,
-            language="english"
+            language="english",
+            max_concurrency=3
         )
 
         prompt_template = ChatPromptTemplate.from_template(
