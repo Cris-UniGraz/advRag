@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from coroutine_manager import coroutine_manager
 from query_optimizer import QueryOptimizer
+from time import time
 
 from rag import (
     load_embedding_model,
@@ -84,7 +85,7 @@ async def main(
                 You are an experienced virtual assistant at the University of Graz and know all the information about the University of Graz.
                 Your main task is to extract information from the provided CONTEXT based on the user's QUERY.
                 Think step by step and only use the information from the CONTEXT that is relevant to the user's QUERY.
-                If the CONTEXT does not contain information to answer the QUESTION, do not state your knowledge, just answer: Ich habe derzeit nicht genügend Informationen, um die Anfrage zu beantworten. Bitte stelle eine andere Anfrage.
+                If the CONTEXT does not contain information to answer the QUESTION, try to answer the question with your knowledge, but only if the answer is appropriate.
                 Give detailed answers in {language}.
 
                 QUERY: ```{question}```\n
@@ -111,7 +112,10 @@ async def main(
             print(f"{RESET}")  # Resetear el formato después de la entrada
             
             if query.lower() in ["exit", "cls"]:
-                    break
+                break
+
+            # Iniciamos el contador de tiempo
+            start_time = time()
             
             # Llamada asincrónica
             context = await process_queries_and_combine_results(
@@ -146,6 +150,9 @@ async def main(
                 response += chunk
             print("\n")
 
+            # Registrar el tiempo de finalización
+            end_time = time()
+
             # Guardar la interacción en el historial
             chat_history.append((query, response))  # response es la respuesta del LLM
 
@@ -173,6 +180,10 @@ async def main(
                 
                 for source in unique_sources.values():
                     print(source)
+            
+            # Calcular y mostrar el tiempo de respuesta
+            processing_time = end_time - start_time
+            print(f"\n{BLUE}{BOLD}>> Es dauerte {GREEN}{processing_time:.2f}{BLUE} Sekunden, um zu antworten.{RESET}")
             
             print(f"\n{BLUE}{BOLD}----------------------------------------------------------------------------{RESET}")
             print("\n")

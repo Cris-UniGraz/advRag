@@ -55,6 +55,8 @@ PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
 GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
 ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 
+SHOW_INTERNAL_MESSAGES = os.getenv("SHOW_INTERNAL_MESSAGES", "false").lower() == "true"
+
 # LangSmith configuration
 os.environ['LANGCHAIN_TRACING_V2'] = os.getenv("LANGCHAIN_TRACING_V2")
 os.environ['LANGCHAIN_API_KEY'] = os.getenv("LANGCHAIN_API_KEY")
@@ -520,14 +522,15 @@ def get_multi_query_retriever(base_retriever, llm, language):
         async def _aget_relevant_documents(self, query: str, *, run_manager=None):
             self.llm_chain = create_multi_query_chain(query)
             
-            # Imprimir el prompt y la respuesta
-            print("\n=== Multi Query Retriever ===")
-            print(f"Query original: {query}")
-            generated_queries = await self.llm_chain.ainvoke({"question": query})
-            print("=== Multi Query Retriever - Queries generadas: ===")
-            for q in generated_queries:
-                print(f"- {q}")
-            print("===========================\n")
+            if SHOW_INTERNAL_MESSAGES:
+                # Imprimir el prompt y la respuesta
+                print("\n=== Multi Query Retriever ===")
+                print(f"Query original: {query}")
+                generated_queries = await self.llm_chain.ainvoke({"question": query})
+                print("=== Multi Query Retriever - Queries generadas: ===")
+                for q in generated_queries:
+                    print(f"- {q}")
+                print("===========================\n")
             
             return await super()._aget_relevant_documents(query, run_manager=run_manager)
 
@@ -572,13 +575,14 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
         def embed_query(self, query: str, *args, **kwargs):
             self.llm_chain = create_hyde_chain(query)
             
-            # Imprimir el prompt y la respuesta
-            print("\n=== HyDE Retriever ===")
-            print(f"Query original: {query}")
-            hypothetical_doc = self.llm_chain.invoke({"question": query})
-            print("=== HyDE Retriever - Documento hipotético generado: ===")
-            print(hypothetical_doc)
-            print("=====================\n")
+            if SHOW_INTERNAL_MESSAGES:
+                # Imprimir el prompt y la respuesta
+                print("\n=== HyDE Retriever ===")
+                print(f"Query original: {query}")
+                hypothetical_doc = self.llm_chain.invoke({"question": query})
+                print("=== HyDE Retriever - Documento hipotético generado: ===")
+                print(hypothetical_doc)
+                print("=====================\n")
             
             return super().embed_query(query, *args, **kwargs)
 
@@ -695,6 +699,13 @@ async def getStepBackQuery(
     chain = prompt | llm | StrOutputParser()
     step_back_query = await chain.ainvoke({"language": language, "question": query})
     
+    if SHOW_INTERNAL_MESSAGES:
+        # Imprimir el prompt y la respuesta
+        print("\n=== Step-Back Query ===")
+        print(f"Original Query: {query}")
+        print(f"Step-Back Query in {language}: {step_back_query}")
+        print("===========================\n")
+
     return step_back_query
 
 
@@ -717,6 +728,14 @@ async def translate_query(query: str, language: str, target_language: str, llm: 
       
     chain = prompt | llm | StrOutputParser()
     translated_query = await chain.ainvoke({"query": query})
+
+    if SHOW_INTERNAL_MESSAGES:
+        # Imprimir el prompt y la respuesta
+        print("\n=== Translated Query ===")
+        print(f"Original Query: {query}")
+        print(f"Translated in {target_language}: {translated_query}")
+        print("===========================\n")
+    
     return translated_query
 
 
