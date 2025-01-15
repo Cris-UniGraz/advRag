@@ -9,24 +9,21 @@ from query_optimizer import QueryOptimizer
 from time import time
 
 from rag import (
-    load_embedding_model,
     azure_openai_call,
     get_ensemble_retriever,
-    process_queries_and_combine_results,
-    initialize_embedding_models
+    process_queries_and_combine_results
 )
 
-# Inicializar el optimizador de consultas
-query_optimizer = QueryOptimizer()
-initialize_embedding_models()
+from EmbeddingManager import EmbeddingManager
+
+# EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
+GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
+ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 
 # Al principio del archivo, después de las importaciones
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
 
-# EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
-GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
-ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
 MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
@@ -43,6 +40,11 @@ RESET = "\033[0m"  # Para resetear el formato
 
 LANGUAGE = "german"
 
+# Inicializar el optimizador de consultas
+query_optimizer = QueryOptimizer()
+embedding_manager = EmbeddingManager()
+embedding_manager.initialize_models(GERMAN_EMBEDDING_MODEL_NAME, ENGLISH_EMBEDDING_MODEL_NAME)
+
 async def cleanup_resources():
     try:
         await coroutine_manager.cleanup()
@@ -56,14 +58,12 @@ async def main(
         print("\n")
 
         llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
-        german_embedding_model = load_embedding_model(model_name=GERMAN_EMBEDDING_MODEL_NAME)
-        english_embedding_model = load_embedding_model(model_name=ENGLISH_EMBEDDING_MODEL_NAME)
 
         # Ensemble Retrieval
         # En la función main, ajustar los parámetros de concurrencia
         german_retriever = await get_ensemble_retriever(
             f"{directory}/de",
-            german_embedding_model,
+            embedding_manager.german_model,
             llm,
             collection_name=f"{COLLECTION_NAME}_de",
             top_k=MAX_CHUNKS_CONSIDERED,
@@ -73,7 +73,7 @@ async def main(
 
         english_retriever = await get_ensemble_retriever(
             f"{directory}/en",
-            english_embedding_model,
+            embedding_manager.english_model,
             llm,
             collection_name=f"{COLLECTION_NAME}_en",
             top_k=MAX_CHUNKS_CONSIDERED,
@@ -128,7 +128,8 @@ async def main(
                 RERANKING_TYPE,
                 RERANKING_TYPE,
                 chat_history,
-                LANGUAGE
+                LANGUAGE,
+                embedding_manager
             )
 
             text = ""

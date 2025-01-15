@@ -1,6 +1,5 @@
 import asyncio
 import os
-import torch
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from langchain.chains import HypotheticalDocumentEmbedder, create_history_aware_retriever
@@ -10,7 +9,6 @@ from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt,
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.schema import Document, HumanMessage
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.storage.mongodb import MongoDBStore
 from langchain_core.documents import Document
@@ -18,7 +16,6 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import BaseOutputParser, StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate, MessagesPlaceholder, PromptTemplate
 from langchain_milvus import Milvus
-from langchain_openai import AzureOpenAIEmbeddings
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
 from openai import AzureOpenAI
@@ -34,6 +31,7 @@ from rag2.loaders import load_documents
 from glossary import find_glossary_terms, find_glossary_terms_with_explanation, get_glossary  # Importa el método get_glossary
 from coroutine_manager import coroutine_manager
 from query_optimizer import QueryOptimizer
+from EmbeddingManager import EmbeddingManager
 
 
 # Al principio del archivo, después de las importaciones
@@ -93,58 +91,6 @@ def split_documents(documents, split_size, split_overlap):
             split_docs.append(Document(page_content=split, metadata=metadata))
     
     return split_docs
-
-   
-def load_embedding_model(
-    model_name = EMBEDDING_MODEL_NAME, 
-):
-    """
-    Loads an embedding model from either Azure OpenAI or Hugging Face repository.
-
-    Parameters:
-    - model_name: The name of the model to load. Use "openai" for Azure OpenAI embeddings
-                 or a Hugging Face model name (defaults to EMBEDDING_MODEL_NAME).
-
-    Returns:
-    - An instance of AzureOpenAIEmbeddings or HuggingFaceBgeEmbeddings
-
-    Raises:
-    - ValueError: If an unsupported device is specified.
-    - OSError: If the model cannot be loaded.
-    """
-
-    try:
-        if model_name == "azure_openai":
-            embedding_model = AzureOpenAIEmbeddings(
-                azure_deployment=os.getenv("AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_ID"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
-            )
-            # aoaimodel=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
-            # print(f"Se ha cargado el embedding model de Azure OpenAI: {aoaimodel}")
-        else:
-            model_name = EMBEDDING_MODEL_NAME 
-            if torch.backends.mps.is_available():
-                device = "mps"
-            elif torch.cuda.is_available():
-                device = "cuda"
-            else:
-                device = "cpu"
-            model_kwargs = {"device": device}
-            encode_kwargs = {"normalize_embeddings": True}  # For cosine similarity computation
-
-            embedding_model = HuggingFaceBgeEmbeddings(
-                model_name=model_name,
-                model_kwargs=model_kwargs,
-                encode_kwargs=encode_kwargs,
-            )
-        return embedding_model
-    except Exception as e:
-        print(f"An error occurred while loading the model: {e}")
-        raise
-
 
 def get_milvus_collection(embedding_model, collection_name):
     """
@@ -228,7 +174,7 @@ def create_milvus_collection(docs, embedding_model, chunk_size, chunk_overlap, c
     return vectorstore
 
 
-async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_name="test", top_k=3, language="german", max_concurrency=5):
+async def get_ensemble_retriever(folder_path, embedding_manager: EmbeddingManager, llm, collection_name="test", top_k=3, language="german", max_concurrency=5):
     """
     Initializes an async ensemble retriever with parallel search capabilities.
     
@@ -251,6 +197,15 @@ async def get_ensemble_retriever(folder_path, embedding_model, llm, collection_n
         # Establecer conexión con Milvus
         connections.connect()
 
+        # Seleccionar el modelo apropiado según el idioma
+        if isinstance(embedding_manager, EmbeddingManager):
+            embedding_model = (
+                embedding_manager.german_model if language == "german" 
+                else embedding_manager.english_model
+            )
+        else:
+            embedding_model = embedding_manager
+            
         if utility.has_collection(collection_name):
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
             children_vectorstore = get_milvus_collection(embedding_model, collection_name)
@@ -762,13 +717,17 @@ async def process_queries_and_combine_results(
     reranker_type_de: str,
     reranker_type_en: str,
     chat_history: List[Tuple[str, str]] = [],
-    language: str = "german"
+    language: str = "german",
+    embedding_manager: EmbeddingManager = None  # Añadir el embedding_manager como parámetro
 ) -> List[Document]:
     query_optimizer = QueryOptimizer()
     
     try:
-        # Optimizar la consulta principal usando el modelo correspondiente
-        embedding_model = GERMAN_EMBEDDING_MODEL if language.lower() == "german" else ENGLISH_EMBEDDING_MODEL
+        embedding_model = (
+            embedding_manager.german_model if language == "german" 
+            else embedding_manager.english_model
+        )
+
         optimized_query = await query_optimizer.optimize_query(
             query,
             language,
