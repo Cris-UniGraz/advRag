@@ -28,11 +28,13 @@ class MetricsManager:
             'query_optimizations': 0,
             'optimization_time': [],
             'cache_hit_rate': 0,
-            'query_similarity_scores': []
+            'query_similarity_scores': [],
+            'cache_cleanups': 0,  # Añadir esta línea
+            'entries_removed': 0  # También es buena idea añadir esta métrica
         }
         self.start_time = datetime.now()
 
-    
+   
     def log_operation(self, operation_type: str, duration: float, success: bool):
         self.metrics['operation_counts'][operation_type] += 1
         self.metrics['response_times'].append(duration)

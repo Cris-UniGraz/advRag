@@ -53,6 +53,8 @@ PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
 GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
 ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 
+MAX_CHUNKS_LLM = int(os.getenv("MAX_CHUNKS_LLM", 3))  # Convertir a entero con valor por defecto
+
 SHOW_INTERNAL_MESSAGES = os.getenv("SHOW_INTERNAL_MESSAGES", "false").lower() == "true"
 
 # LangSmith configuration
@@ -205,7 +207,7 @@ async def get_ensemble_retriever(folder_path, embedding_manager: EmbeddingManage
             )
         else:
             embedding_model = embedding_manager
-            
+
         if utility.has_collection(collection_name):
             base_vectorstore = get_milvus_collection(embedding_model, collection_name)
             children_vectorstore = get_milvus_collection(embedding_model, collection_name)
@@ -721,8 +723,18 @@ async def process_queries_and_combine_results(
     embedding_manager: EmbeddingManager = None  # Añadir el embedding_manager como parámetro
 ) -> List[Document]:
     query_optimizer = QueryOptimizer()
-    
+     
     try:
+        # Verificar caché primero
+        cached_result = query_optimizer.get_llm_response(query, language)
+        if cached_result:
+            return {
+                'response': cached_result['response'],  # Acceder directamente al valor
+                'sources': cached_result['sources'],
+                'from_cache': True,
+                'documents': [Document(page_content=cached_result['response'])]
+            }
+
         embedding_model = (
             embedding_manager.german_model if language == "german" 
             else embedding_manager.english_model
@@ -736,10 +748,12 @@ async def process_queries_and_combine_results(
         
         # Cuando se procesa el resultado del optimizador
         if optimized_query['source'] == 'cache':
-            # Convertir el resultado cacheado a Document si es necesario
-            if isinstance(optimized_query['result'], str):
-                return [Document(page_content=optimized_query['result'])]
-            return optimized_query['result']
+            return {
+                'response': optimized_query['result'],
+                'sources': [],
+                'from_cache': True,
+                'documents': [Document(page_content=optimized_query['result'])] if isinstance(optimized_query['result'], str) else optimized_query['result']
+            }
             
         # Procesar consultas en el idioma correspondiente
         if language.lower() == "german":
@@ -810,38 +824,75 @@ async def process_queries_and_combine_results(
                         continue
                     if not hasattr(document, 'metadata') or document.metadata is None:
                         document.metadata = {}
-                    # if 'metadata' not in document or not document.metadata:
-                        # document.metadata = {}
                     all_reranked_docs.append(document)
-
         
         if not all_reranked_docs:
-            print(f"No relevant documents found for query: {query}")
-            return []
+            return {'response': '', 'sources': [], 'from_cache': False}
 
-        seen = set()
-        unique_docs = []
-        for doc in all_reranked_docs:
-            doc_id = (doc.page_content, doc.metadata.get('source'))
-            if doc_id not in seen:
-                seen.add(doc_id)
-                unique_docs.append(doc)
-        
-        sorted_docs = sorted(
-            unique_docs,
-            key=lambda x: x.metadata.get('reranking_score', 0),
-            reverse=True
+        # Preparar el contexto para el LLM
+        text = ""
+        sources = []
+        filtered_context = []
+        for document in all_reranked_docs:
+            validated_doc = query_optimizer._validate_document(document)
+            if len(filtered_context) <= MAX_CHUNKS_LLM:
+                text += "\n" + document.page_content
+                source = f"{os.path.basename(document.metadata.get('source', 'Unknown'))} (Seite {document.metadata.get('page', 'N/A')})"
+                if source not in sources:
+                    sources.append(source)
+                filtered_context.append(validated_doc)
+
+        # Crear el prompt template
+        prompt_template = ChatPromptTemplate.from_template(
+            """
+            You are an experienced virtual assistant at the University of Graz and know all the information about the University of Graz.
+            Your main task is to extract information from the provided CONTEXT based on the user's QUERY.
+            Think step by step and only use the information from the CONTEXT that is relevant to the user's QUERY.
+            If the CONTEXT does not contain information to answer the QUESTION, try to answer the question with your knowledge, but only if the answer is appropriate.
+            Give detailed answers in {language}.
+
+            QUERY: ```{question}```\n
+            CONTEXT: ```{context}```\n
+            """
         )
-        
-        return sorted_docs
+
+        # Crear la cadena de procesamiento
+        chain = prompt_template | llm | StrOutputParser()
+
+        # Generar la respuesta del LLM
+        response = await chain.ainvoke({
+            "context": filtered_context,
+            "language": language,
+            "question": query
+        })
+
+        # Preparar las fuentes para caché
+        sources_for_cache = []
+        for doc in filtered_context:
+            source_info = {
+                'source': doc.metadata.get('source', 'Unknown Source'),
+                'page': doc.metadata.get('page', 'N/A'),
+                'sheet_name': doc.metadata.get('sheet_name', None),
+                'page_number': doc.metadata.get('page_number', None)
+            }
+            if source_info not in sources_for_cache:  # Evitar duplicados
+                sources_for_cache.append(source_info)
+
+        # Almacenar en caché
+        query_optimizer._store_llm_response(query, response, language, sources_for_cache)
+
+        return {
+            'response': response,
+            'sources': sources_for_cache,
+            'from_cache': False,
+            'documents': all_reranked_docs
+        }
+
     except Exception as e:
         print(f"Error processing queries: {e}")
-        return []
+        return {'response': '', 'sources': [], 'from_cache': False}
     finally:
         await coroutine_manager.cleanup()
-
-
-
 
 
 @traceable # Auto-trace this function

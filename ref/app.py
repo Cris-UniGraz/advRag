@@ -26,9 +26,9 @@ load_dotenv(ENV_VAR_PATH)
 
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
-MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
+#MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
-MAX_CHUNKS_LLM = int(os.getenv("MAX_CHUNKS_LLM", 3))  # Convertir a entero con valor por defecto
+
 DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")
 
 # Códigos ANSI para colores y texto en negrita
@@ -56,6 +56,12 @@ async def main(
 ):
     try:
         print("\n")
+        show_sources = True
+        
+        # 1. Limpiar caché al inicio de la sesión
+        entries_removed = query_optimizer.cleanup_cache()
+        if entries_removed > 0:
+            print(f"{BLUE}{BOLD}>> Cache bereinigt: {entries_removed} Einträge entfernt{RESET}")
 
         llm = (lambda x: azure_openai_call(x))  # Envolver la llamada en una función lambda
 
@@ -81,29 +87,25 @@ async def main(
             max_concurrency=3
         )
 
-        prompt_template = ChatPromptTemplate.from_template(
-            (
-                """
-                You are an experienced virtual assistant at the University of Graz and know all the information about the University of Graz.
-                Your main task is to extract information from the provided CONTEXT based on the user's QUERY.
-                Think step by step and only use the information from the CONTEXT that is relevant to the user's QUERY.
-                If the CONTEXT does not contain information to answer the QUESTION, try to answer the question with your knowledge, but only if the answer is appropriate.
-                Give detailed answers in {language}.
-
-                QUERY: ```{question}```\n
-                CONTEXT: ```{context}```\n
-                """
-            )
-        )
-
-        chain = prompt_template | llm | StrOutputParser()
-
         print(f"\n{BLUE}{BOLD}------------------------- Willkommen im UniChatBot -------------------------{RESET}")
         
         # Añadir una lista para mantener el historial
         chat_history = []
 
+        # Variables para control de limpieza periódica
+        last_cleanup_time = time()
+        CLEANUP_INTERVAL = 3600  # 1 hora en segundos
+
         while True:
+            current_time = time()
+
+            # 2. Limpieza periódica del caché
+            if current_time - last_cleanup_time > CLEANUP_INTERVAL:
+                entries_removed = query_optimizer.cleanup_cache()
+                if entries_removed > 0:
+                    print(f"{BLUE}{BOLD}>> Periodische Cache-Bereinigung: {entries_removed} Einträge entfernt{RESET}")
+                last_cleanup_time = current_time
+
             print("\n")
 
             # Imprimir "Benutzer-Eingabe: " en azul y negrita
@@ -115,6 +117,14 @@ async def main(
             
             if query.lower() in ["exit", "cls"]:
                 break
+
+            # Mostrar estadísticas del caché si se solicita
+            if query.lower() == "cache stats":
+                stats = query_optimizer.get_cache_stats()
+                print(f"{BLUE}{BOLD}>> Cache-Statistiken:{RESET}")
+                for key, value in stats.items():
+                    print(f"- {key}: {value}")
+                continue
 
             # Iniciamos el contador de tiempo
             start_time = time()
@@ -132,62 +142,71 @@ async def main(
                 embedding_manager
             )
 
-            text = ""
-            sources = []
-            filtered_context = []
-            for document in context:
-                validated_doc = query_optimizer._validate_document(document)
-                if len(filtered_context) <= MAX_CHUNKS_LLM: #and document.metadata.get('reranking_score', 0) > MIN_RERANKING_SCORE:
-                    text += "\n" + document.page_content
-                    source = f"{os.path.basename(document.metadata.get('source', 'Unknown'))} (Seite {document.metadata.get('page', 'N/A')})"
-                    if source not in sources:
-                        sources.append(source)
-                    filtered_context.append(validated_doc)
+            if context.get('from_cache'):
+                print(f"{BLUE}{BOLD}\n>> LLM-Antwort (aus Cache): {RESET}", end="")
+                
+                if isinstance(context, dict):
+                    print(context.get('response', ''))  # Accedemos específicamente a la respuesta
+                else:
+                    print(context)
+                
+                if show_sources:
+                    # Mostrar fuentes
+                    print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
+                    for source in context['sources']:
+                        if source.get('sheet_name'):
+                            print(f"- Dokument: {os.path.basename(source['source'])} (Blatt: {source['sheet_name']})")
+                        else:
+                            print(f"- Dokument: {os.path.basename(source['source'])} (Seite: {source['page_number']})")
+                    
+                    # Guardar en historial
+                    chat_history.append((query, context['response']))
+            else:
+                print(f"{BLUE}{BOLD}\n>> LLM-Antwort: {RESET}", end="")
 
-            # Imprimir "LLM-Antwort:" en azul negrita
-            print(f"{BLUE}{BOLD}\n>> LLM-Antwort: {RESET}", end="")
+                # Recolectar la respuesta del streaming
+                response = context['response']
+                print(response)
 
-            # Recolectar la respuesta del streaming
-            response = ""
-            for chunk in chain.stream({"context": text, "language": LANGUAGE, "question": query}):
-                print(chunk, end="")
-                response += chunk
-            print("\n")
+                # Guardar en historial de manera consistente
+                chat_history.append((query, response))
+
+                if show_sources:
+                    print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
+                    unique_sources = {}
+                    for document in context['sources']:
+                        source = os.path.basename(document['source'])
+                        if document['source'].lower().endswith('.xlsx'):
+                            sheet = document.get('sheet_name', 'Unbekannt')
+                            key = (source, sheet)
+                            if sheet != 'Unbekannt':
+                                unique_sources[key] = f"- Dokument: {source} (Blatt: {sheet})"
+                            else:
+                                unique_sources[key] = f"- Dokument: {source}"
+                        else:
+                            page = document.get('page_number', 'Unbekannt')
+                            key = (source, page)
+                            if page != 'Unbekannt':
+                                unique_sources[key] = f"- Dokument: {source} (Seite: {page})"
+                            else:
+                                unique_sources[key] = f"- Dokument: {source}"
+                    
+                    for source in unique_sources.values():
+                        print(source)
 
             # Registrar el tiempo de finalización
             end_time = time()
 
             # Guardar la interacción en el historial
             chat_history.append((query, response))  # response es la respuesta del LLM
-
-            show_sources = True
-
-            if show_sources:
-                print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
-                unique_sources = {}
-                for document in filtered_context:
-                    source = os.path.basename(document.metadata.get('source', 'Unknown Source'))
-                    if document.metadata['source'].lower().endswith('.xlsx'):
-                        sheet = document.metadata.get('sheet_name', 'Unbekannt')
-                        key = (source, sheet)
-                        if sheet != 'Unbekannt':
-                            unique_sources[key] = f"- Dokument: {source} (Blatt: {sheet})"
-                        else:
-                            unique_sources[key] = f"- Dokument: {source}"
-                    else:
-                        page = document.metadata.get('page_number', 'Unbekannt')
-                        key = (source, page)
-                        if page != 'Unbekannt':
-                            unique_sources[key] = f"- Dokument: {source} (Seite: {page})"
-                        else:
-                            unique_sources[key] = f"- Dokument: {source}"
-                
-                for source in unique_sources.values():
-                    print(source)
             
             # Calcular y mostrar el tiempo de respuesta
             processing_time = end_time - start_time
-            print(f"\n{BLUE}{BOLD}>> Es dauerte {GREEN}{processing_time:.2f}{BLUE} Sekunden, um zu antworten.{RESET}")
+
+            if context.get('from_cache'):
+                print(f"\n{BLUE}{BOLD}>> Cache-Antwort in {GREEN}{processing_time:.2f}{BLUE} Sekunden gefunden.{RESET}")
+            else:
+                print(f"\n{BLUE}{BOLD}>> Es dauerte {GREEN}{processing_time:.2f}{BLUE} Sekunden, um zu antworten.{RESET}")
             
             print(f"\n{BLUE}{BOLD}----------------------------------------------------------------------------{RESET}")
             print("\n")
