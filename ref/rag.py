@@ -710,7 +710,7 @@ async def translate_query(query: str, language: str, target_language: str, llm: 
 
 
 @traceable
-@coroutine_manager.coroutine_handler(timeout=60)
+@coroutine_manager.coroutine_handler(timeout=120)
 async def process_queries_and_combine_results(
     query: str,
     llm: Any,

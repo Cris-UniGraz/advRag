@@ -1,3 +1,4 @@
+import asyncio
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from jsonargparse import CLI
@@ -47,9 +48,15 @@ embedding_manager.initialize_models(GERMAN_EMBEDDING_MODEL_NAME, ENGLISH_EMBEDDI
 
 async def cleanup_resources():
     try:
+        # Esperar que se completen operaciones pendientes
+        await asyncio.sleep(1)
         await coroutine_manager.cleanup()
+        # Cerrar conexiones adicionales si existen
     except Exception as e:
         print(f"Error during cleanup: {e}")
+    finally:
+        # Asegurar que se cierren todas las conexiones
+        pass
 
 async def main(
     directory: str = DIRECTORY_PATH
@@ -116,10 +123,19 @@ async def main(
             print(f"{RESET}")  # Resetear el formato después de la entrada
             
             if query.lower() in ["exit", "cls"]:
+                # Limpiar recursos antes de salir
+                await cleanup_resources()
+                # Esperar que se completen las operaciones de LangSmith pendientes
+                await asyncio.sleep(1)
                 break
-
+            # Borrar el historial de la conversación si se solicita
+            elif query.lower() in ["reset", "rst"]:
+                chat_history = []  # Resetear el historial
+                print(f"{BLUE}{BOLD}>> Chat-Verlauf wurde zurückgesetzt.{RESET}")
+                print(f"\n{BLUE}{BOLD}----------------------------------------------------------------------------{RESET}")
+                continue
             # Mostrar estadísticas del caché si se solicita
-            if query.lower() == "cache stats":
+            elif query.lower() == "cache stats":
                 stats = query_optimizer.get_cache_stats()
                 print(f"{BLUE}{BOLD}>> Cache-Statistiken:{RESET}")
                 for key, value in stats.items():
@@ -152,6 +168,7 @@ async def main(
                 
                 if show_sources:
                     # Mostrar fuentes
+                    print("\n")
                     print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
                     for source in context['sources']:
                         if source.get('sheet_name'):
@@ -172,6 +189,7 @@ async def main(
                 chat_history.append((query, response))
 
                 if show_sources:
+                    print("\n")
                     print(f"{BLUE}{BOLD}>> Quellen:{RESET}")
                     unique_sources = {}
                     for document in context['sources']:
