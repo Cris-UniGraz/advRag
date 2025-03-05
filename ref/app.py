@@ -1,6 +1,4 @@
 import asyncio
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
 from jsonargparse import CLI
 import os
 from dotenv import load_dotenv
@@ -17,7 +15,6 @@ from rag import (
 
 from EmbeddingManager import EmbeddingManager
 
-# EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
 ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
 
@@ -27,7 +24,6 @@ load_dotenv(ENV_VAR_PATH)
 
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 RERANKING_TYPE = os.getenv("RERANKING_TYPE")
-#MIN_RERANKING_SCORE = float(os.getenv("MIN_RERANKING_SCORE", 0.5))  # Convertir a flotante con valor por defecto
 MAX_CHUNKS_CONSIDERED = int(os.getenv("MAX_CHUNKS_CONSIDERED", 3))  # Convertir a entero con valor por defecto
 
 DIRECTORY_PATH = os.getenv("DIRECTORY_PATH")

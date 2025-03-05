@@ -1,20 +1,17 @@
 import asyncio
 import os
-from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from langchain.chains import HypotheticalDocumentEmbedder, create_history_aware_retriever
 from langchain.docstore.document import Document
 from langchain.retrievers import EnsembleRetriever, ParentDocumentRetriever
 from reranking_models import reranking_cohere, reranking_colbert, reranking_gpt, reranking_german
 from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.schema import Document, HumanMessage
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.storage.mongodb import MongoDBStore
-from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.output_parsers import BaseOutputParser, StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate, MessagesPlaceholder, PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate, MessagesPlaceholder
 from langchain_milvus import Milvus
 from langsmith import traceable
 from langsmith.wrappers import wrap_openai
@@ -22,11 +19,10 @@ from openai import AzureOpenAI
 from pathlib import Path
 from pymilvus import connections, utility
 from pymongo import MongoClient
-from rich import print
 from tqdm import tqdm
 from typing import Any, Dict, List, Tuple
 
-from rag2.loaders import load_documents
+from rag_utils.loaders import load_documents
 
 from glossary import find_glossary_terms, find_glossary_terms_with_explanation, get_glossary  # Importa el método get_glossary
 from coroutine_manager import coroutine_manager
@@ -38,7 +34,6 @@ from EmbeddingManager import EmbeddingManager
 ENV_VAR_PATH = "C:/Users/hernandc/RAG Test/apikeys.env"
 load_dotenv(ENV_VAR_PATH)
 
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME")
 AZURE_OPENAI_LLM_MODEL = os.getenv("AZURE_OPENAI_LLM_MODEL")
 
 MONGODB_CONNECTION_STRING = os.getenv("MONGODB_CONNECTION_STRING")
@@ -48,7 +43,6 @@ CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 512))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 16))
 PARENT_CHUNK_SIZE = int(os.getenv("PARENT_CHUNK_SIZE", 4096))
 PARENT_CHUNK_OVERLAP = int(os.getenv("PARENT_CHUNK_OVERLAP", 0))
-PAGE_OVERLAP = int(os.getenv("PAGE_OVERLAP", 256))
 
 GERMAN_EMBEDDING_MODEL_NAME = os.getenv("GERMAN_EMBEDDING_MODEL_NAME")
 ENGLISH_EMBEDDING_MODEL_NAME = os.getenv("ENGLISH_EMBEDDING_MODEL_NAME")
@@ -62,6 +56,7 @@ os.environ['LANGCHAIN_TRACING_V2'] = os.getenv("LANGCHAIN_TRACING_V2")
 os.environ['LANGCHAIN_API_KEY'] = os.getenv("LANGCHAIN_API_KEY")
 os.environ['LANGCHAIN_PROJECT'] = os.getenv("LANGCHAIN_PROJECT")
 
+'''
 GERMAN_EMBEDDING_MODEL = None
 ENGLISH_EMBEDDING_MODEL = None
 
@@ -74,7 +69,7 @@ def initialize_embedding_models():
         
         GERMAN_EMBEDDING_MODEL = future_german.result()
         ENGLISH_EMBEDDING_MODEL = future_english.result()
-
+'''
 def split_documents(documents, split_size, split_overlap):
     # Dividir documentos en tamaño DOC_SIZE
     doc_splitter = RecursiveCharacterTextSplitter(
@@ -164,15 +159,6 @@ def create_milvus_collection(docs, embedding_model, chunk_size, chunk_overlap, c
     
     vectorstore = Milvus(collection_name=collection_name, embedding_function=embedding_model)
     
-    '''
-    # Crear el vectorstore con los documentos procesados en lotes
-    Milvus.from_documents(
-        documents=docs_processed,
-        embedding=embedding_model,
-        collection_name=collection_name,
-    )
-    '''
-
     return vectorstore
 
 
@@ -337,7 +323,6 @@ def load_bm25(collection_name):
     
     try:
         retriever = BM25Retriever.from_documents(valid_docs)
-        # print(f"BM25Retriever creado con éxito con {len(valid_docs)} documentos")
         return retriever
     except Exception as e:
         print(f"Error al crear BM25Retriever: {str(e)}")
@@ -535,9 +520,6 @@ def get_hyde_retriever(embedding_model, llm, collection_name, language, top_k=3)
                 ("human", "{question}")
             ])
             
-        #if language == "english":
-        #    print(f">> get_hyde_retriever > query = {query} - language = {language} - prompt = {prompt}.")
-
         chain = prompt | llm | StrOutputParser()
         return chain
 

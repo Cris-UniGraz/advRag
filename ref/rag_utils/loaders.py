@@ -1,26 +1,39 @@
-import filetype
 import os
 import re
 import pymupdf
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
 from langchain.docstore.document import Document
 from langchain_community.document_loaders import WebBaseLoader
-# from llama_parse import LlamaParse
+from utils.files import get_file_type
+import docx2txt
+import re
+from typing import List
+from langchain.schema import Document
+import openpyxl
 
 os.getenv("USER_AGENT")
-
 
 def load_documents(folder_path):
     documents = []
     for file in os.listdir(folder_path):
-        if not file.startswith('~$'):
+        if not file.startswith('~'):
             file_path = os.path.join(folder_path, file)
-            kind = filetype.guess(file_path)
-            if kind is not None:
-                if kind.extension == FileType.PDF:
+            
+            # Read file as bytes
+            with open(file_path, 'rb') as f:
+                file_bytes = f.read()
+            
+            # Use get_file_type from files.py
+            file_extension, mime_type = get_file_type(file_bytes)
+            
+            if file_extension:
+                if file_extension == FileType.PDF:
                     documents.extend(load_pdf(file_path, file))
-                elif (kind.extension == FileType.WORD) or (kind.extension == FileType.WORDX):
+                elif file_extension in [FileType.WORD, FileType.WORDX]:
                     documents.extend(load_docx(file_path, file))
-                elif (kind.extension == FileType.EXCEL) or (kind.extension == FileType.EXCELX):
+                elif file_extension in [FileType.EXCEL, FileType.EXCELX]:
                     documents.extend(load_xlsx(file_path, file))
 
     return documents
@@ -120,11 +133,6 @@ def load_word(file, filename):
     return documents
 
 
-import docx2txt
-import re
-from typing import List
-from langchain.schema import Document
-
 def split_into_pages(text: str) -> List[str]:
     """
     Divide el texto en páginas basándose en saltos de página.
@@ -176,10 +184,7 @@ def load_docx(file_path: str, filename: str) -> List[Document]:
             }
         )
         documents.append(doc)
-    
-    # print("------------------------------------------------------------------------------>>>\nDocx documents:")
-    # print(documents)
-    
+      
     return documents
 
 
@@ -206,7 +211,7 @@ def load_excel(file, filename):
     return documents
 
 
-import openpyxl
+
 def load_xlsx(file_path, filename):
     """
     Loads text from an XLSX file, including sheet names in metadata.
@@ -231,10 +236,6 @@ def load_xlsx(file_path, filename):
                 }
             )
             documents.append(document)
-
-    # Agregado
-    # print ("------------------------------------------------------------------------------>>>\nXlsx documents:")
-    # print (documents)
 
     return documents
 
@@ -270,6 +271,104 @@ def extract_sheet_name(text):
     if match:
         return match.group(1)
     return None
+
+
+# Función para cargar una única página de Confluence utilizando autenticación
+def load_confluence(url, username, password):
+    """
+    Carga una única página de Confluence utilizando autenticación,
+    limpia el contenido y lo devuelve como una lista con un objeto Document.
+    
+    Parámetros:
+    - url: URL de la página en Confluence.
+    - username: Nombre de usuario para la autenticación.
+    - password: Contraseña para la autenticación.
+    
+    Returns:
+    - Una lista con un objeto Document.
+    """
+    documents = []
+    session = requests.Session()
+    session.auth = (username, password)
+    try:
+        response = session.get(url)
+        response.raise_for_status()
+        html = response.text
+        # Utilizar BeautifulSoup para extraer el contenido relevante
+        soup = BeautifulSoup(html, "html.parser")
+        # Se asume que el contenido principal se encuentra en la etiqueta <body>
+        content_elem = soup.find("body")
+        text = content_elem.get_text(separator=" ", strip=True) if content_elem else html
+        text = clean_extra_whitespace(text)
+        text = group_broken_paragraphs(text)
+        
+        metadata = {
+            "source": url,
+            "file_type": "confluence",
+            "page_number": -1,
+            "sheet_name": "",
+        }
+        document = Document(page_content=text, metadata=metadata)
+        documents.append(document)
+    except Exception as e:
+        print(f"Ocurrió un error al cargar la página de Confluence: {e}")
+        raise
+    return documents
+
+
+# Nueva función para cargar la estructura de páginas (árbol) de Confluence de forma genérica
+def load_confluence_tree(base_url, username, password):
+    """
+    Dada la URL base de un espacio de Confluence (por ejemplo, https://wiki.uni-graz.at/display/uniK/),
+    extrae de la página principal todos los enlaces hacia las páginas hijas pertenecientes al mismo espacio
+    y carga el contenido de cada una de ellas.
+    
+    Parámetros:
+    - base_url: URL base del espacio en Confluence.
+    - username: Nombre de usuario para la autenticación.
+    - password: Contraseña para la autenticación.
+    
+    Returns:
+    - Una lista de objetos Document correspondientes a cada página extraída.
+    """
+    import requests
+    from urllib.parse import urljoin, urlparse
+
+    documents = []
+    session = requests.Session()
+    session.auth = (username, password)
+    try:
+        response = session.get(base_url)
+        response.raise_for_status()
+        html = response.text
+        soup = BeautifulSoup(html, "html.parser")
+        body = soup.find("body")
+        if not body:
+            return documents
+
+        # Obtener el patrón base a partir de la URL base, por ejemplo "display/uniK"
+        parsed_url = urlparse(base_url)
+        path = parsed_url.path.rstrip("/")  # e.g. "/display/uniK"
+        base_pattern = path.lstrip("/")      # e.g. "display/uniK"
+
+        # Extraer todos los enlaces que contengan el patrón base de la URL (para el espacio correspondiente)
+        links = body.find_all("a", href=True)
+        urls = set()
+        for link in links:
+            href = link["href"]
+            if base_pattern in href:
+                full_url = urljoin(base_url, href)
+                urls.add(full_url)
+
+        # Cargar cada página encontrada
+        for url in urls:
+            docs = load_confluence(url, username, password)
+            documents.extend(docs)
+    except Exception as e:
+        print(f"Ocurrió un error al cargar la estructura de Confluence: {e}")
+        raise
+    return documents
+
 
 # Tipos de archivo y extensiones permitidas
 class FileType:
